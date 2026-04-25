@@ -1,0 +1,17 @@
+# Build artifacts
+/xray-panel
+/dist/
+*.exe
+*.test
+*.out
+
+# Local editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local panel configs that may contain secrets
+panel.yaml
+panel.local.yaml
+disabled.json
