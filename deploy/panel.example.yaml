@@ -1,0 +1,28 @@
+# xray-panel-cli config. Copy to /etc/xray-panel-cli/panel.yaml on the
+# router and edit. The panel reads this file on startup; it does not
+# modify it.
+
+# LAN-only bind. Use the router's LAN IP, not 0.0.0.0 — the panel will
+# refuse to start if this address resolves to a WAN interface.
+# Beryl LAN is 192.168.200.1/24 by default. Port 9092 mirrors flint2.
+listen: "192.168.200.1:9092"
+
+# Paths on the router. Defaults match the layout this repo deploys to.
+sing_box_config: /etc/sing-box/config.json
+sing_box_init:   /etc/init.d/sing-box
+sing_box_log:    /var/log/sing-box.log
+profiles_store:  /etc/xray-panel-cli/profiles.json
+
+# clash-API endpoint exposed by sing-box (experimental.clash_api in
+# config.json). The panel proxies live data through it: traffic counters,
+# active connections, latency tests. Default sing-box config in this
+# repo binds to 127.0.0.1:9090.
+clash_api: "127.0.0.1:9090"
+
+auth:
+  username: admin
+  # Generate with:  htpasswd -nbBC 12 admin 'yourpassword' | cut -d: -f2
+  # or:             python3 -c 'import bcrypt; print(bcrypt.hashpw(b"yourpassword", bcrypt.gensalt()).decode())'
+  # If you also run the flint2 panel, you can paste the same hash to
+  # share credentials between the two consoles.
+  password_bcrypt: "$2a$12$REPLACE_ME_WITH_A_REAL_BCRYPT_HASH_XXXXXXXXXXXXXXXXXXXXX"

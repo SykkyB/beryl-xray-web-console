@@ -20,3 +20,9 @@ disabled.json
 router/etc/sing-box/config.json
 router/etc/sing-box/config.local.json
 build/sing-box-build/
+
+# xray-panel-cli build artifacts and local panel config (bcrypt hash)
+/dist/
+/xray-panel-cli
+deploy/panel.yaml
+deploy/panel.local.yaml

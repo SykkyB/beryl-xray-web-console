@@ -285,12 +285,23 @@ curl -s http://127.0.0.1:9090/connections
 - [x] Привязка к физическому переключателю через hotplug
 - [x] Идемпотентный init (start/stop/restart/reload)
 
-### Phase 2 — TODO
-- [ ] Снос устаревших пакетов (`v2raya`, `xray-core`)
+### Phase 2 — in progress
+- [x] Снос устаревших пакетов (`v2raya`, `xray-core`)
 - [ ] Несколько профилей VLESS+Reality (для fail-over) через `outbound: selector` + `urltest`
-- [ ] Веб-консоль `beryl-xray-web-console`:
-  - бэкенд поверх clash-API (`127.0.0.1:9090`) + UCI-хуки
-  - фронт в стиле GL.iNet UI (шрифты/иконки/палитра из их прошивки)
-  - переключение профилей, killswitch toggle, bind_switch toggle, лайв-статус (трафик, latency, exit-IP), редактор конфига с валидацией
-  - интеграция в дашборд GL.iNet через iframe / отдельный поддомен
-- [ ] Симметричный проект для Flint 2 (`flint2-xray-web-console`)
+- [ ] Веб-консоль `xray-panel-cli` (см. `cmd/xray-panel-cli/`):
+  - [x] **2A.** Скелет: Go single-binary, embed UI, bcrypt basic-auth, LAN-bind guard, procd init, deploy-script, `/api/ping`
+  - [ ] **2B.** Service API: status, killswitch toggle, bind_switch toggle, sing-box start/stop/restart
+  - [ ] **2C.** Профили: парсинг `vless://` URL, CRUD, активация → пересборка `config.json` → reload
+  - [ ] **2D.** Frontend: status-страница, переключатели, профили, лайв-данные через clash-API + WebSocket-логи
+  - [ ] **2E.** Multi-outbound `selector` / `urltest` для real-time fail-over
+  - [ ] **2F.** Стиль GL.iNet UI (шрифты/палитра/иконки из их прошивки) + интеграция через iframe / поддомен
+- [ ] Симметричный апдейт для серверной стороны (`flint2-xray-web-console`)
+
+#### Стек панели
+
+- **Backend:** Go 1.25, single binary (~6 МБ статичный musl), embedded UI через `embed.FS`, basic-auth (bcrypt), LAN-bind guard.
+- **Порт:** `9092` (на beryl 9090 занят clash-API; 80/443/8080/8443 — nginx/uhttpd/GL.iNet UI).
+- **Auth:** общий bcrypt-хеш с flint2-панелью — одни логин/пароль на обе консоли.
+- **Конфиг панели:** `/etc/xray-panel-cli/panel.yaml` (LAN-bind, paths, creds).
+- **Сборка:** `GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/xray-panel-cli`
+- **Деплой:** `./deploy/install.sh beryl`
