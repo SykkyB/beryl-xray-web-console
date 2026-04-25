@@ -15,3 +15,8 @@
 panel.yaml
 panel.local.yaml
 disabled.json
+
+# Real sing-box config contains VLESS UUID (auth credential) — keep template only
+router/etc/sing-box/config.json
+router/etc/sing-box/config.local.json
+build/sing-box-build/

@@ -1,0 +1,91 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true,
+    "output": "/var/log/sing-box.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "proxy-dns",
+        "server": "1.1.1.1",
+        "server_port": 53,
+        "detour": "proxy"
+      },
+      {
+        "type": "udp",
+        "tag": "local-dns",
+        "server": "127.0.0.1",
+        "server_port": 53
+      }
+    ],
+    "rules": [
+      {
+        "_comment": "Resolve VPN server hostname via local DNS to avoid bootstrap loop",
+        "domain": ["__VPN_HOSTNAME__"],
+        "server": "local-dns"
+      }
+    ],
+    "final": "proxy-dns",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "sing-tun",
+      "address": ["172.19.0.1/30"],
+      "mtu": 1400,
+      "auto_route": true,
+      "strict_route": true,
+      "_comment_stack": "MUST be 'gvisor' on OpenWrt+musl. 'system' silently drops TCP.",
+      "stack": "gvisor"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "__VPN_HOSTNAME__",
+      "server_port": 9443,
+      "uuid": "__VLESS_UUID__",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "__REALITY_SNI__",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "__REALITY_PUBLIC_KEY__",
+          "short_id": "__REALITY_SHORT_ID__"
+        }
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "default_domain_resolver": {
+      "server": "local-dns"
+    },
+    "rules": [
+      { "action": "sniff" },
+      { "_comment": "Private IPs (LAN, WAN gateway) MUST go direct or DNS resolution loops", "ip_is_private": true, "outbound": "direct" },
+      { "protocol": "dns", "action": "hijack-dns" }
+    ],
+    "auto_detect_interface": true,
+    "final": "proxy"
+  },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "default_mode": "rule"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+
+config sing-box 'config'
+	option enabled '1'
+	option killswitch '0'
+	option bind_switch '0'
