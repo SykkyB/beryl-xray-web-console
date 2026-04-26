@@ -9,13 +9,19 @@ import (
 	"runtime/debug"
 
 	"beryl-xray-web-console/internal/config"
+	"beryl-xray-web-console/internal/service"
+	"beryl-xray-web-console/internal/sysprobe"
+	"beryl-xray-web-console/internal/ucitool"
 )
 
-// Server bundles the dependencies the HTTP handlers need. Phase 2A is
-// minimal — just the config and embedded UI; service / clash / profiles
-// will land in later sub-phases.
+// Server bundles the dependencies the HTTP handlers need. Anything that
+// touches the OS goes through these injected ports so handlers stay
+// trivially unit-testable with FakeRunner.
 type Server struct {
-	Cfg *config.Config
+	Cfg     *config.Config
+	Service *service.Manager
+	UCI     *ucitool.Tool
+	Probe   *sysprobe.Probe
 }
 
 // Handler returns a net/http handler with all routes registered, wrapped
@@ -23,6 +29,10 @@ type Server struct {
 func (s *Server) Handler() nethttp.Handler {
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("GET /api/ping", s.handlePing)
+	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("POST /api/service", s.handleServiceAction)
+	mux.HandleFunc("POST /api/killswitch", s.handleKillswitch)
+	mux.HandleFunc("POST /api/bind_switch", s.handleBindSwitch)
 	registerUIRoutes(mux)
 	return BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
 }

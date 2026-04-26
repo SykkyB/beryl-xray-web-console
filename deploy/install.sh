@@ -48,13 +48,25 @@ echo ">>> installing on $TARGET"
 ssh $SSH_OPTS "$TARGET" /bin/sh <<'REMOTE'
 set -eu
 
+# Disable kernel-level Multipath TCP. The MPTCP implementation in this
+# OpenWrt kernel build is incomplete (subflow_v4_init_req is a stub);
+# any TCP listener that doesn't explicitly opt out — Go's net/http does
+# not — receives mangled SYN-ACKs that route via lo with cleared headers
+# and the LAN client never gets a reply. uhttpd works because GL.iNet
+# patches it to disable MPTCP on its sockets. Doing it system-wide is
+# simpler and harmless: nothing on this firmware actually uses MPTCP.
+mkdir -p /etc/sysctl.d
+echo 'net.mptcp.enabled=0' > /etc/sysctl.d/99-disable-mptcp.conf
+sysctl -w net.mptcp.enabled=0 >/dev/null 2>&1 || true
+
+mkdir -p /etc/xray-panel-cli
+
 # OpenWrt's busybox lacks coreutils' install, so cp + chmod by hand.
 cp /tmp/xray-panel-cli      /usr/bin/xray-panel-cli
 chmod 0755                  /usr/bin/xray-panel-cli
 cp /tmp/xray-panel-cli.init /etc/init.d/xray-panel-cli
 chmod 0755                  /etc/init.d/xray-panel-cli
 
-mkdir -p /etc/xray-panel-cli
 if [ ! -f /etc/xray-panel-cli/panel.yaml ]; then
 	cp /tmp/panel.example.yaml /etc/xray-panel-cli/panel.yaml
 	chmod 0600                 /etc/xray-panel-cli/panel.yaml

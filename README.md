@@ -272,6 +272,7 @@ curl -s http://127.0.0.1:9090/connections
 - **При смене WAN** (USB-tether / Wi-Fi-репитер) есть короткая (≤5 сек) дыра, пока sing-box переустанавливает соединение через новый интерфейс. `procd respawn 3600 5 5` поднимает sing-box если он упадёт.
 - **DNS upstream от роутера** идёт через `direct` outbound в обход тоннеля (`ip_is_private` matches LAN-gateway). Если хочется DNS-over-VPN — поправь route-rules.
 - **Bootstrap loop** при резолве `vpn.sys-lab.xyz`: решён правилом `default_domain_resolver: local-dns` + DNS-rule `domain → local-dns` + порядком route-rules (`ip_is_private` ВЫШЕ `hijack-dns`).
+- **MPTCP в kernel** OpenWrt 21.02 GL.iNet build — **сломан** для произвольных listener'ов (`subflow_v4_init_req` не реализован → SYN-ACK кривой `SRC=0.0.0.0 DST=0.0.0.0`, уходит в `lo`, LAN-клиент таймаутит). По умолчанию включён (`net.mptcp.enabled=1`). `uhttpd` патчем GL.iNet'а отключает MPTCP на сокете, поэтому стоковый UI работает; Go-listener'ы — нет. **Фикс:** `echo net.mptcp.enabled=0 > /etc/sysctl.d/99-disable-mptcp.conf` (применяется автоматически в `deploy/install.sh`).
 
 ---
 
@@ -290,7 +291,7 @@ curl -s http://127.0.0.1:9090/connections
 - [ ] Несколько профилей VLESS+Reality (для fail-over) через `outbound: selector` + `urltest`
 - [ ] Веб-консоль `xray-panel-cli` (см. `cmd/xray-panel-cli/`):
   - [x] **2A.** Скелет: Go single-binary, embed UI, bcrypt basic-auth, LAN-bind guard, procd init, deploy-script, `/api/ping`
-  - [ ] **2B.** Service API: status, killswitch toggle, bind_switch toggle, sing-box start/stop/restart
+  - [x] **2B.** Service API: `GET /api/state` (sing-box процесс, `sing-tun`, физ. переключатель, killswitch, bind_switch, enabled), `POST /api/service`, `POST /api/killswitch`, `POST /api/bind_switch`. UI с тумблерами и кнопками управления + auto-refresh каждые 5с.
   - [ ] **2C.** Профили: парсинг `vless://` URL, CRUD, активация → пересборка `config.json` → reload
   - [ ] **2D.** Frontend: status-страница, переключатели, профили, лайв-данные через clash-API + WebSocket-логи
   - [ ] **2E.** Multi-outbound `selector` / `urltest` для real-time fail-over

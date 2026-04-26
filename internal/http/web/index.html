@@ -11,12 +11,53 @@
         <h1>xray-panel-cli</h1>
         <p class="subtitle">VPN-клиент управления для GL.iNet Beryl</p>
     </header>
+
     <main>
-        <section id="status">
-            <p>Phase 2A skeleton. UI прибудет в подфазе 2D.</p>
-            <p id="ping-result">Загрузка…</p>
+        <section>
+            <div class="row">
+                <h2>Состояние</h2>
+                <button id="refresh" class="btn-ghost">Обновить</button>
+            </div>
+            <table id="state-table">
+                <tbody>
+                    <tr><th>sing-box процесс</th><td data-key="service">…</td></tr>
+                    <tr><th>sing-tun</th>         <td data-key="tun">…</td></tr>
+                    <tr><th>Физ. переключатель</th><td data-key="physical_switch">…</td></tr>
+                    <tr><th>Killswitch (UCI)</th> <td data-key="killswitch">…</td></tr>
+                    <tr><th>Bind switch (UCI)</th><td data-key="bind_switch">…</td></tr>
+                    <tr><th>Сервис включён</th>   <td data-key="enabled">…</td></tr>
+                </tbody>
+            </table>
+            <p class="muted" id="generated-at"></p>
+        </section>
+
+        <section>
+            <h2>Управление</h2>
+
+            <div class="control-row">
+                <label class="lbl">Killswitch</label>
+                <button class="btn-toggle" data-toggle="killswitch" data-state="off">…</button>
+                <span class="hint">При падении тоннеля LAN дропается. По умолчанию — off (как у GL.iNet WG/OVPN).</span>
+            </div>
+
+            <div class="control-row">
+                <label class="lbl">Bind switch</label>
+                <button class="btn-toggle" data-toggle="bind_switch" data-state="off">…</button>
+                <span class="hint">Привязать sing-box к физическому переключателю на корпусе роутера.</span>
+            </div>
+
+            <div class="control-row">
+                <label class="lbl">Sing-box</label>
+                <button class="btn-action" data-action="start">Start</button>
+                <button class="btn-action" data-action="stop">Stop</button>
+                <button class="btn-action" data-action="restart">Restart</button>
+                <button class="btn-action" data-action="reload">Reload</button>
+            </div>
+
+            <p id="action-result" class="muted"></p>
         </section>
     </main>
+
     <script src="/app.js"></script>
 </body>
 </html>

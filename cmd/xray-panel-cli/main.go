@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net"
 	nethttp "net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,9 @@ import (
 
 	"beryl-xray-web-console/internal/config"
 	panelhttp "beryl-xray-web-console/internal/http"
+	"beryl-xray-web-console/internal/service"
+	"beryl-xray-web-console/internal/sysprobe"
+	"beryl-xray-web-console/internal/ucitool"
 )
 
 func main() {
@@ -31,17 +35,34 @@ func main() {
 		log.Fatalf("refusing to start: %v", err)
 	}
 
-	srv := &panelhttp.Server{Cfg: cfg}
+	srv := &panelhttp.Server{
+		Cfg: cfg,
+		Service: &service.Manager{
+			InitScript: cfg.SingBoxInit,
+			Timeout:    15 * time.Second,
+		},
+		UCI:   &ucitool.Tool{Timeout: 5 * time.Second},
+		Probe: &sysprobe.Probe{Timeout: 5 * time.Second},
+	}
+
+	// Force tcp4: Go's default "tcp" opens an AF_INET6 dual-stack
+	// socket, and on the OpenWrt kernel running on Beryl, a dual-stack
+	// socket bound to a wildcard answers IPv4 SYNs with SYN-ACKs that
+	// route via lo with cleared headers — the LAN client never gets a
+	// reply. AF_INET-only avoids that path.
+	ln, err := net.Listen("tcp4", cfg.Listen)
+	if err != nil {
+		log.Fatalf("listen %s: %v", cfg.Listen, err)
+	}
 
 	httpSrv := &nethttp.Server{
-		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
-		log.Printf("xray-panel-cli listening on %s", cfg.Listen)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
+		log.Printf("xray-panel-cli listening on %s (tcp4)", cfg.Listen)
+		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
 			log.Fatalf("http: %v", err)
 		}
 	}()

@@ -2,10 +2,13 @@
 # router and edit. The panel reads this file on startup; it does not
 # modify it.
 
-# LAN-only bind. Use the router's LAN IP, not 0.0.0.0 — the panel will
-# refuse to start if this address resolves to a WAN interface.
-# Beryl LAN is 192.168.200.1/24 by default. Port 9092 mirrors flint2.
-listen: "192.168.200.1:9092"
+# Listen address. On stock GL.iNet firmware fw3 already drops WAN-side
+# traffic to non-allowed ports (zone_wan_src_DROP catches everything),
+# so binding to 0.0.0.0 is safe in practice and avoids a kernel-routing
+# quirk on this hardware where binding to a specific LAN IP causes
+# SYN-ACK replies to leave via lo and never reach the LAN client.
+# Override with the LAN IP if you know your firewall posture is custom.
+listen: "0.0.0.0:9092"
 
 # Paths on the router. Defaults match the layout this repo deploys to.
 sing_box_config: /etc/sing-box/config.json

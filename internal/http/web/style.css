@@ -1,4 +1,4 @@
-/* xray-panel-cli — Phase 2A placeholder styles. Will be reworked to
+/* xray-panel-cli — Phase 2B placeholder styles. Will be reworked to
    match the GL.iNet stock UI in 2F. */
 
 * { box-sizing: border-box; }
@@ -16,11 +16,8 @@ header {
     border-bottom: 1px solid #e5e7eb;
 }
 
-h1 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 600;
-}
+h1 { margin: 0; font-size: 20px; font-weight: 600; }
+h2 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
 
 .subtitle {
     margin: 4px 0 0;
@@ -31,6 +28,9 @@ h1 {
 main {
     padding: 24px 32px;
     max-width: 960px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
 }
 
 section {
@@ -40,9 +40,81 @@ section {
     padding: 20px;
 }
 
-#ping-result {
-    margin-top: 12px;
-    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
-    font-size: 13px;
-    color: #4b5563;
+.row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
 }
+
+table#state-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+table#state-table th,
+table#state-table td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+table#state-table th {
+    width: 200px;
+    font-weight: 500;
+    color: #6b7280;
+}
+
+td .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+}
+.pill-ok    { background: #d1fae5; color: #065f46; }
+.pill-bad   { background: #fee2e2; color: #991b1b; }
+.pill-warn  { background: #fef3c7; color: #92400e; }
+.pill-muted { background: #e5e7eb; color: #4b5563; }
+
+.muted { color: #6b7280; font-size: 12px; }
+
+.control-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.lbl { width: 130px; font-weight: 500; font-size: 14px; }
+
+.hint { color: #6b7280; font-size: 12px; }
+
+.btn-toggle, .btn-action, .btn-ghost {
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #1f2937;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.btn-toggle:hover, .btn-action:hover, .btn-ghost:hover {
+    background: #f9fafb;
+}
+.btn-toggle[data-state="on"] {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+.btn-toggle[disabled], .btn-action[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#action-result { min-height: 16px; margin-top: 8px; }
+.action-ok  { color: #065f46; }
+.action-bad { color: #991b1b; }
