@@ -12,6 +12,7 @@ listen: "0.0.0.0:9092"
 
 # Paths on the router. Defaults match the layout this repo deploys to.
 sing_box_config: /etc/sing-box/config.json
+sing_box_bin:    /usr/bin/sing-box
 sing_box_init:   /etc/init.d/sing-box
 sing_box_log:    /var/log/sing-box.log
 profiles_store:  /etc/xray-panel-cli/profiles.json

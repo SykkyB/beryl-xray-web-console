@@ -272,6 +272,139 @@ main {
     font-size: 12px;
 }
 
+/* ── profiles list ───────────────────────────────────────────────────── */
+
+.profile-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.profile-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    flex-wrap: wrap;
+}
+.profile-row.is-active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.profile-info {
+    flex: 1 1 200px;
+    min-width: 0;
+}
+.profile-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text);
+}
+.profile-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    word-break: break-all;
+}
+
+.profile-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.profile-empty {
+    padding: 12px;
+    text-align: center;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+}
+
+.profile-add {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elev);
+}
+.profile-add summary {
+    cursor: pointer;
+    padding: 10px 14px;
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text);
+    user-select: none;
+}
+.profile-add summary:hover { background: #1b2c47; }
+.profile-add[open] summary { border-bottom: 1px solid var(--border); }
+
+.profile-form {
+    padding: 12px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lbl-block {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+}
+
+.profile-form textarea,
+.profile-form input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    resize: vertical;
+}
+.profile-form textarea:focus,
+.profile-form input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+}
+.btn-primary:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.btn-danger {
+    color: var(--danger);
+    border-color: rgba(248, 113, 113, 0.4);
+}
+.btn-danger:hover {
+    background: rgba(248, 113, 113, 0.08);
+    border-color: var(--danger);
+}
+
+code {
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px;
+    background: var(--bg-elev);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--text);
+}
+
 /* ── responsive tweaks ───────────────────────────────────────────────── */
 
 /* tablets / narrow desktop */

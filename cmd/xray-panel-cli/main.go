@@ -18,6 +18,8 @@ import (
 	"beryl-xray-web-console/internal/config"
 	panelhttp "beryl-xray-web-console/internal/http"
 	"beryl-xray-web-console/internal/service"
+	"beryl-xray-web-console/internal/singbox"
+	"beryl-xray-web-console/internal/store"
 	"beryl-xray-web-console/internal/sysprobe"
 	"beryl-xray-web-console/internal/ucitool"
 )
@@ -44,8 +46,14 @@ func main() {
 			// procd handoff and iptables ops.
 			Timeout: 45 * time.Second,
 		},
-		UCI:   &ucitool.Tool{Timeout: 5 * time.Second},
-		Probe: &sysprobe.Probe{Timeout: 5 * time.Second},
+		UCI:      &ucitool.Tool{Timeout: 5 * time.Second},
+		Probe:    &sysprobe.Probe{Timeout: 5 * time.Second},
+		Profiles: &store.Profiles{Path: cfg.ProfilesStore},
+		Renderer: &singbox.Renderer{
+			ConfigPath:   cfg.SingBoxConfig,
+			SingBoxBin:   cfg.SingBoxBin,
+			CheckTimeout: 10 * time.Second,
+		},
 	}
 
 	// Force tcp4: Go's default "tcp" opens an AF_INET6 dual-stack

@@ -39,11 +39,16 @@ func (p *Probe) timeout() time.Duration {
 }
 
 // SingBoxRunning returns true if a sing-box process is currently running.
-// Implemented via pgrep so it works without procd cooperation.
+// Uses busybox pgrep with no flags — the default match is against
+// /proc/PID/comm, which is exactly "sing-box" for our binary. We do NOT
+// use `-x` because busybox's `-x` is broken on this build (always
+// reports not-found even when the process exists), and we do NOT use
+// `-f` because that matches anything with "sing-box" in its full
+// cmdline (e.g. a shell whose argv carries the word).
 func (p *Probe) SingBoxRunning(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.timeout())
 	defer cancel()
-	_, _, err := p.runner().Run(ctx, "pgrep", "-x", "sing-box")
+	_, _, err := p.runner().Run(ctx, "pgrep", "sing-box")
 	if err == nil {
 		return true, nil
 	}

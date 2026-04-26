@@ -42,6 +42,10 @@
                         <span class="status-label">Boot</span>
                         <span data-key="enabled" class="pill pill-muted">…</span>
                     </span>
+                    <span class="status-item">
+                        <span class="status-label">Active profile</span>
+                        <span data-key="active_profile" class="pill pill-muted">…</span>
+                    </span>
                 </div>
             </div>
             <div class="card-body">
@@ -52,6 +56,33 @@
                     <button class="btn-action" data-action="reload">Reload</button>
                 </div>
                 <p class="hint">Start, stop, or hot-reload the sing-box VPN client. <em>Reload</em> validates the config and re-applies it without losing the tunnel for long.</p>
+            </div>
+        </section>
+
+        <!-- Profiles -->
+        <section class="card" data-card="profiles">
+            <div class="card-head">
+                <h2>Profiles</h2>
+            </div>
+            <div class="card-body">
+                <ul id="profile-list" class="profile-list">
+                    <li class="profile-empty muted">Loading…</li>
+                </ul>
+
+                <details class="profile-add">
+                    <summary>Add VLESS profile</summary>
+                    <div class="profile-form">
+                        <label class="lbl-block" for="vless-url">VLESS URL</label>
+                        <textarea id="vless-url" rows="3" placeholder="vless://UUID@host:port?security=reality&amp;…#Name"></textarea>
+                        <label class="lbl-block" for="vless-name">Optional name override</label>
+                        <input type="text" id="vless-name" placeholder="leave blank to use the URL's #fragment">
+                        <div class="action-row">
+                            <button id="vless-import" class="btn-action btn-primary">Import</button>
+                        </div>
+                    </div>
+                </details>
+
+                <p class="hint">Activating a profile rewrites <code>/etc/sing-box/config.json</code>, validates it, and reloads sing-box if it's running. The active profile survives reboots (UCI <code>sing-box.config.active_profile</code>).</p>
             </div>
         </section>
 

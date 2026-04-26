@@ -8,6 +8,7 @@ import (
 const validYAML = `
 listen: "192.168.200.1:9092"
 sing_box_config: /etc/sing-box/config.json
+sing_box_bin: /usr/bin/sing-box
 sing_box_init: /etc/init.d/sing-box
 sing_box_log: /var/log/sing-box.log
 profiles_store: /etc/xray-panel-cli/profiles.json
@@ -70,7 +71,7 @@ func TestRejectsBadBcrypt(t *testing.T) {
 }
 
 func TestRequiresAllPaths(t *testing.T) {
-	for _, missing := range []string{"sing_box_config", "sing_box_init", "sing_box_log", "profiles_store", "clash_api"} {
+	for _, missing := range []string{"sing_box_config", "sing_box_bin", "sing_box_init", "sing_box_log", "profiles_store", "clash_api"} {
 		// Comment out the missing line by removing it entirely from the YAML.
 		bad := strings.ReplaceAll(validYAML, missing+":", "_unused:")
 		_, err := Parse([]byte(bad))

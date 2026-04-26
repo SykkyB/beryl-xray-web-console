@@ -71,6 +71,9 @@
             renderBlock(cell("enabled"), s.enabled, (v) =>
                 v ? { cls: "pill-ok", text: "enabled" } : { cls: "pill-muted", text: "disabled" });
 
+            renderBlock(cell("active_profile"), s.active_profile, (v) =>
+                v && v.name ? { cls: "pill-ok", text: v.name } : { cls: "pill-muted", text: "none" });
+
             renderBlock(cell("killswitch"), s.killswitch, (v) =>
                 v ? { cls: "pill-ok", text: "ON" } : { cls: "pill-muted", text: "OFF" });
 
@@ -136,12 +139,117 @@
         }));
     }
 
+    // ── profiles ────────────────────────────────────────────────────────
+
+    function escapeHTML(str) {
+        return String(str).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;",
+            '"': "&quot;", "'": "&#39;",
+        }[c]));
+    }
+
+    async function fetchProfiles() {
+        const list = $("#profile-list");
+        try {
+            const r = await fetch("/api/profiles", { credentials: "same-origin" });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const data = await r.json();
+            const profiles = data.profiles || [];
+
+            if (profiles.length === 0) {
+                list.innerHTML = `<li class="profile-empty muted">No profiles yet — add one with a vless:// URL below.</li>`;
+                return;
+            }
+
+            list.innerHTML = profiles.map((p) => `
+                <li class="profile-row${p.active ? " is-active" : ""}">
+                    <div class="profile-info">
+                        <div class="profile-name">${escapeHTML(p.name)}${p.active ? ` <span class="pill pill-ok">ACTIVE</span>` : ""}</div>
+                        <div class="profile-meta">${escapeHTML(p.server)}:${p.port} · uuid ${escapeHTML(p.uuid_mask)}${p.flow ? " · flow " + escapeHTML(p.flow) : ""}</div>
+                    </div>
+                    <div class="profile-actions">
+                        ${p.active ? "" : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`}
+                        ${p.active ? "" : `<button class="btn-action btn-danger"  data-act="delete"   data-id="${escapeHTML(p.id)}">Delete</button>`}
+                    </div>
+                </li>
+            `).join("");
+        } catch (err) {
+            list.innerHTML = `<li class="profile-empty muted">Failed to load profiles: ${escapeHTML(err.message)}</li>`;
+        }
+    }
+
+    async function importVless() {
+        const url = $("#vless-url").value.trim();
+        const name = $("#vless-name").value.trim();
+        if (!url) {
+            setActionResult("VLESS URL is empty", false);
+            return;
+        }
+        const btn = $("#vless-import");
+        await setBusy(btn, async () => {
+            try {
+                const body = name ? { url, name } : { url };
+                const data = await postJSON("/api/profiles/import-vless", body);
+                setActionResult(`Profile "${data.name}" imported`, true);
+                $("#vless-url").value = "";
+                $("#vless-name").value = "";
+                await fetchProfiles();
+                await fetchState();
+            } catch (err) {
+                setActionResult("Import failed: " + err.message, false);
+            }
+        });
+    }
+
+    async function profileAction(btn) {
+        const id = btn.dataset.id;
+        const act = btn.dataset.act;
+        if (!id || !act) return;
+        await setBusy(btn, async () => {
+            try {
+                if (act === "activate") {
+                    const data = await postJSON("/api/profiles/" + encodeURIComponent(id) + "/activate", {});
+                    const note = data.reloaded ? " (reloaded)" : " (will start on next Start)";
+                    setActionResult(`Profile "${data.profile_name}" activated${note}`, true);
+                } else if (act === "delete") {
+                    if (!confirm("Delete this profile?")) return;
+                    await fetch("/api/profiles/" + encodeURIComponent(id), {
+                        method: "DELETE",
+                        credentials: "same-origin",
+                    }).then(async (r) => {
+                        if (!r.ok) {
+                            const j = await r.json().catch(() => ({}));
+                            throw new Error(j.error || ("HTTP " + r.status));
+                        }
+                    });
+                    setActionResult("Profile deleted", true);
+                }
+                await fetchProfiles();
+                await fetchState();
+            } catch (err) {
+                setActionResult(act + " failed: " + err.message, false);
+            }
+        });
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
         bindToggle("killswitch",  "Killswitch");
         bindToggle("bind_switch", "Bind switch");
-        $$("button.btn-action").forEach(bindAction);
-        $("#refresh").addEventListener("click", fetchState);
+        $$("button.btn-action").forEach((b) => {
+            if (b.dataset.action) bindAction(b);
+        });
+        $("#refresh").addEventListener("click", () => { fetchState(); fetchProfiles(); });
+        $("#vless-import").addEventListener("click", importVless);
+
+        // Profile row buttons are added dynamically — delegate.
+        $("#profile-list").addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-act]");
+            if (btn) profileAction(btn);
+        });
+
         fetchState();
+        fetchProfiles();
         setInterval(fetchState, 5000);
+        setInterval(fetchProfiles, 15000);
     });
 })();

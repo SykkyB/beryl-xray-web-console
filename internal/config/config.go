@@ -27,6 +27,10 @@ type Config struct {
 	// active profile changes; sing-box itself reads it on start/reload.
 	SingBoxConfig string `yaml:"sing_box_config"`
 
+	// SingBoxBin is the sing-box binary path. Used to validate a
+	// rendered config (`sing-box check -c …`) before activating it.
+	SingBoxBin string `yaml:"sing_box_bin"`
+
 	// SingBoxInit is the procd init script for the sing-box service —
 	// used by /api/service/* endpoints (start/stop/restart/reload) and by
 	// the killswitch_/bind_switch_ extra-commands.
@@ -94,6 +98,7 @@ func (c *Config) validate() error {
 		name, val string
 	}{
 		{"sing_box_config", c.SingBoxConfig},
+		{"sing_box_bin", c.SingBoxBin},
 		{"sing_box_init", c.SingBoxInit},
 		{"sing_box_log", c.SingBoxLog},
 		{"profiles_store", c.ProfilesStore},

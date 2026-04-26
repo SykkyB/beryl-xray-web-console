@@ -10,6 +10,8 @@ import (
 
 	"beryl-xray-web-console/internal/config"
 	"beryl-xray-web-console/internal/service"
+	"beryl-xray-web-console/internal/singbox"
+	"beryl-xray-web-console/internal/store"
 	"beryl-xray-web-console/internal/sysprobe"
 	"beryl-xray-web-console/internal/ucitool"
 )
@@ -18,10 +20,12 @@ import (
 // touches the OS goes through these injected ports so handlers stay
 // trivially unit-testable with FakeRunner.
 type Server struct {
-	Cfg     *config.Config
-	Service *service.Manager
-	UCI     *ucitool.Tool
-	Probe   *sysprobe.Probe
+	Cfg      *config.Config
+	Service  *service.Manager
+	UCI      *ucitool.Tool
+	Probe    *sysprobe.Probe
+	Profiles *store.Profiles
+	Renderer *singbox.Renderer
 }
 
 // Handler returns a net/http handler with all routes registered, wrapped
@@ -33,6 +37,10 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("POST /api/service", s.handleServiceAction)
 	mux.HandleFunc("POST /api/killswitch", s.handleKillswitch)
 	mux.HandleFunc("POST /api/bind_switch", s.handleBindSwitch)
+	mux.HandleFunc("GET /api/profiles", s.handleProfilesList)
+	mux.HandleFunc("POST /api/profiles/import-vless", s.handleProfilesImportVless)
+	mux.HandleFunc("DELETE /api/profiles/{id}", s.handleProfileDelete)
+	mux.HandleFunc("POST /api/profiles/{id}/activate", s.handleProfileActivate)
 	registerUIRoutes(mux)
 	return BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
 }

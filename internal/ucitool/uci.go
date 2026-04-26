@@ -79,3 +79,27 @@ func ParseBool(v string) bool {
 	}
 	return false
 }
+
+// Set runs `uci set key=value`. The caller is responsible for following
+// up with Commit (or several Sets followed by one Commit) — the panel
+// follows the same pattern OpenWrt scripts do.
+func (t *Tool) Set(ctx context.Context, key, value string) error {
+	ctx, cancel := context.WithTimeout(ctx, t.timeout())
+	defer cancel()
+	_, _, err := t.runner().Run(ctx, t.bin(), "set", key+"="+value)
+	if err != nil {
+		return fmt.Errorf("uci set %s=%s: %w", key, value, err)
+	}
+	return nil
+}
+
+// Commit persists pending changes to /etc/config/<package>.
+func (t *Tool) Commit(ctx context.Context, pkg string) error {
+	ctx, cancel := context.WithTimeout(ctx, t.timeout())
+	defer cancel()
+	_, _, err := t.runner().Run(ctx, t.bin(), "commit", pkg)
+	if err != nil {
+		return fmt.Errorf("uci commit %s: %w", pkg, err)
+	}
+	return nil
+}

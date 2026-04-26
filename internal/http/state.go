@@ -16,6 +16,7 @@ type stateResponse struct {
 	Killswitch     block  `json:"killswitch"`
 	BindSwitch     block  `json:"bind_switch"`
 	Enabled        block  `json:"enabled"`
+	ActiveProfile  block  `json:"active_profile"`
 	GeneratedAt    string `json:"generated_at"`
 }
 
@@ -67,6 +68,26 @@ func (s *Server) handleState(w nethttp.ResponseWriter, r *nethttp.Request) {
 		resp.Enabled = block{Error: err.Error()}
 	} else {
 		resp.Enabled = block{OK: true, Value: v}
+	}
+
+	if activeID, err := s.UCI.Get(ctx, uciActiveKey); err != nil {
+		resp.ActiveProfile = block{Error: err.Error()}
+	} else if activeID == "" {
+		resp.ActiveProfile = block{OK: true, Value: nil}
+	} else if s.Profiles != nil {
+		if p, err := s.Profiles.Get(activeID); err != nil {
+			resp.ActiveProfile = block{OK: true, Value: map[string]any{
+				"id":   activeID,
+				"name": "(missing)",
+			}}
+		} else {
+			resp.ActiveProfile = block{OK: true, Value: map[string]any{
+				"id":     activeID,
+				"name":   p.Name,
+				"server": p.Server,
+				"port":   p.Port,
+			}}
+		}
 	}
 
 	writeJSON(w, nethttp.StatusOK, resp)
