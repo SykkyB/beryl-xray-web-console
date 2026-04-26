@@ -26,3 +26,6 @@ build/sing-box-build/
 /xray-panel-cli
 deploy/panel.yaml
 deploy/panel.local.yaml
+
+# Router-state backups (contain VLESS UUIDs and bcrypt hashes)
+/backups/
