@@ -12,11 +12,11 @@ import (
 	"beryl-xray-web-console/internal/store"
 )
 
-func sampleProfile() store.Profile {
+func sampleProfile(suffix string) store.Profile {
 	return store.Profile{
-		ID:          "id-1",
-		Name:        "Home Flint2",
-		Server:      "vpn.example.com",
+		ID:          "id-" + suffix,
+		Name:        "Profile " + suffix,
+		Server:      suffix + ".example.com",
 		Port:        9443,
 		UUID:        "11406a7a-31f6-4454-8270-6b183c909c36",
 		Flow:        "xtls-rprx-vision",
@@ -27,32 +27,101 @@ func sampleProfile() store.Profile {
 	}
 }
 
-func TestRender_ProducesValidJSON(t *testing.T) {
-	raw, err := Render(sampleProfile())
+func TestRender_SingleProfile(t *testing.T) {
+	p := sampleProfile("a")
+	raw, err := Render([]store.Profile{p}, p.ID)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("output is not valid JSON: %v", err)
+		t.Fatalf("invalid JSON: %v", err)
 	}
-	// Spot-check a couple of placeholders landed where expected.
 	out := string(raw)
-	if !strings.Contains(out, `"vpn.example.com"`) {
-		t.Errorf("server not substituted")
+	if !strings.Contains(out, `"a.example.com"`) {
+		t.Errorf("missing server")
 	}
-	if !strings.Contains(out, `"server_port": 9443`) {
-		t.Errorf("port not substituted")
+	// Selector must always exist with tag "proxy" so route.final keeps working.
+	if !strings.Contains(out, `"type": "selector"`) {
+		t.Errorf("missing selector outbound")
 	}
-	if !strings.Contains(out, `"uuid": "11406a7a-31f6-4454-8270-6b183c909c36"`) {
-		t.Errorf("uuid not substituted")
+	if !strings.Contains(out, `"tag": "proxy"`) {
+		t.Errorf("missing proxy tag on selector")
+	}
+}
+
+func TestRender_MultipleProfilesUseSelector(t *testing.T) {
+	pa := sampleProfile("a")
+	pb := sampleProfile("b")
+	pb.UUID = "f62f2e29-c581-4423-bafe-3771c7faefe9"
+
+	raw, err := Render([]store.Profile{pa, pb}, pb.ID)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var cfg struct {
+		Outbounds []map[string]any `json:"outbounds"`
+		DNS       struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Expect: 2 vless + 1 selector + 1 direct = 4 outbounds.
+	if got := len(cfg.Outbounds); got != 4 {
+		t.Fatalf("outbounds count: got %d, want 4", got)
+	}
+
+	// The selector's default must be the active profile's tag.
+	var selector map[string]any
+	for _, o := range cfg.Outbounds {
+		if o["type"] == "selector" {
+			selector = o
+			break
+		}
+	}
+	if selector == nil {
+		t.Fatalf("no selector outbound")
+	}
+	wantTag := TagOf(pb)
+	if selector["default"] != wantTag {
+		t.Errorf("selector default: got %v, want %v", selector["default"], wantTag)
+	}
+
+	// DNS rule must mention both servers so they resolve via local-dns.
+	if len(cfg.DNS.Rules) == 0 {
+		t.Fatalf("no DNS rules")
+	}
+	domains, _ := cfg.DNS.Rules[0]["domain"].([]any)
+	if len(domains) != 2 {
+		t.Errorf("DNS rule domains: got %d, want 2", len(domains))
+	}
+}
+
+func TestRender_DefaultsActiveToFirstWhenIDMissing(t *testing.T) {
+	p := sampleProfile("a")
+	raw, err := Render([]store.Profile{p}, "nonexistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"default": "`+TagOf(p)+`"`) {
+		t.Errorf("active should fall back to first profile")
+	}
+}
+
+func TestRender_RejectsEmpty(t *testing.T) {
+	_, err := Render(nil, "")
+	if err == nil {
+		t.Fatal("expected error for empty profile list")
 	}
 }
 
 func TestRender_DefaultsFingerprint(t *testing.T) {
-	p := sampleProfile()
+	p := sampleProfile("a")
 	p.Fingerprint = ""
-	raw, err := Render(p)
+	raw, err := Render([]store.Profile{p}, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,32 +131,28 @@ func TestRender_DefaultsFingerprint(t *testing.T) {
 }
 
 func TestRender_EscapesQuotesInProfile(t *testing.T) {
-	p := sampleProfile()
+	p := sampleProfile("a")
 	p.Server = `evil"; }, "extra": {`
-	raw, err := Render(p)
+	raw, err := Render([]store.Profile{p}, p.ID)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	// Even with an evil server name, output must still be a single
-	// well-formed JSON object — no injection.
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("escape failure produced invalid JSON: %v", err)
+		t.Fatalf("escape failure produced invalid JSON: %v\n--- output ---\n%s", err, raw)
 	}
 }
 
 func TestWriteAndCheck_WritesAtomically(t *testing.T) {
 	dir := t.TempDir()
-	r := &Renderer{
-		ConfigPath: filepath.Join(dir, "config.json"),
-		// SingBoxBin empty → skip validation, we test pure I/O here.
-	}
-	if err := r.WriteAndCheck(context.Background(), sampleProfile()); err != nil {
+	r := &Renderer{ConfigPath: filepath.Join(dir, "config.json")}
+	p := sampleProfile("a")
+	if err := r.WriteAndCheck(context.Background(), []store.Profile{p}, p.ID); err != nil {
 		t.Fatalf("WriteAndCheck: %v", err)
 	}
 	data, err := os.ReadFile(r.ConfigPath)
 	if err != nil {
-		t.Fatalf("read result: %v", err)
+		t.Fatal(err)
 	}
 	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -101,24 +166,21 @@ func TestWriteAndCheck_WritesAtomically(t *testing.T) {
 func TestWriteAndCheck_RejectsOnCheckFailure(t *testing.T) {
 	dir := t.TempDir()
 	confPath := filepath.Join(dir, "config.json")
-
-	// Pre-populate so we can verify it isn't overwritten on rejection.
 	if err := os.WriteFile(confPath, []byte(`{"prev":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	f := (&runner.Fake{}).On(runner.FakeCall{
-		Match:  "/usr/bin/sing-box check",
-		Stderr: "FATAL: bad config",
-		Err:    &runner.ExitErr{ExitCode: 1, Stderr: "FATAL: bad config"},
+		Match: "/usr/bin/sing-box check",
+		Err:   &runner.ExitErr{ExitCode: 1, Stderr: "FATAL: bad config"},
 	})
 	r := &Renderer{
 		ConfigPath: confPath,
 		SingBoxBin: "/usr/bin/sing-box",
 		Runner:     f,
 	}
-	err := r.WriteAndCheck(context.Background(), sampleProfile())
-	if err == nil {
+	p := sampleProfile("a")
+	if err := r.WriteAndCheck(context.Background(), []store.Profile{p}, p.ID); err == nil {
 		t.Fatal("expected error from check rejection")
 	}
 	got, _ := os.ReadFile(confPath)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"beryl-xray-web-console/internal/service"
+	"beryl-xray-web-console/internal/singbox"
 	"beryl-xray-web-console/internal/store"
 	"beryl-xray-web-console/internal/vless"
 
@@ -195,17 +196,24 @@ func (s *Server) handleProfileActivate(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 
+	all, err := s.Profiles.List()
+	if err != nil {
+		writeErr(w, nethttp.StatusInternalServerError, err)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	if err := s.Renderer.WriteAndCheck(ctx, prof); err != nil {
+	// Render the full selector-style config with every saved profile
+	// and the new active one as the selector default. Always write to
+	// disk so a future restart picks the right default; the live switch
+	// itself is done via clash-API below (no reload).
+	if err := s.Renderer.WriteAndCheck(ctx, all, id); err != nil {
 		writeErr(w, nethttp.StatusBadRequest, err)
 		return
 	}
 
-	// Track the active profile in UCI before reloading so a crash mid-
-	// reload still leaves a consistent record of which config the
-	// service file represents.
 	if err := s.UCI.Set(ctx, uciActiveKey, id); err != nil {
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return
@@ -215,27 +223,47 @@ func (s *Server) handleProfileActivate(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 
-	// Reload sing-box if it's currently running; otherwise leave it
-	// stopped (user can hit Start, or the physical switch will).
 	running, _ := s.Probe.SingBoxRunning(ctx)
+	switched := false
+	reloaded := false
+
 	if running {
-		if err := s.Service.Do(ctx, service.ActionReload); err != nil {
-			writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("reload: %w", err))
-			return
+		// Try the cheap path first — clash-API selector switch. Works
+		// when sing-box is already running with a selector-style
+		// config (i.e. has been (re)loaded at least once on the new
+		// template). Instant, no tunnel interruption for unrelated
+		// LAN flows.
+		newTag := singbox.TagOf(prof)
+		if s.Clash != nil {
+			if err := s.Clash.SelectProxy(ctx, "proxy", newTag); err == nil {
+				switched = true
+				// Drop existing proxy flows so the new outbound's
+				// VLESS UUID gets used for everything new.
+				_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
+			}
 		}
-		// After reload, force-drop any lingering proxy connections so
-		// upstream stats / dashboards see a clean reconnect with the
-		// new profile's UUID instead of a phantom of the old session.
-		// Best-effort: log on failure, don't fail the whole request.
-		_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
+
+		// Fallback: full reload. Happens on first activation after
+		// migrating to selector-style config (old config didn't have
+		// a selector, so the clash PUT 404'd) or on any other clash
+		// API issue.
+		if !switched {
+			if err := s.Service.Do(ctx, service.ActionReload); err != nil {
+				writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("reload: %w", err))
+				return
+			}
+			_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
+			reloaded = true
+		}
 	}
 
 	s.nudgeExitIP()
 
 	writeJSON(w, nethttp.StatusOK, map[string]any{
-		"ok":            true,
-		"active_id":     id,
-		"reloaded":      running,
-		"profile_name":  prof.Name,
+		"ok":           true,
+		"active_id":    id,
+		"profile_name": prof.Name,
+		"switched":     switched, // true = instant clash-API selector flip
+		"reloaded":     reloaded, // true = full sing-box reload (slower)
 	})
 }

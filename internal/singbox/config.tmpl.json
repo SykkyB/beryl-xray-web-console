@@ -22,7 +22,7 @@
     ],
     "rules": [
       {
-        "domain": [{{json .Server}}],
+        "domain": [{{range $i, $s := .Servers}}{{if $i}}, {{end}}{{json $s}}{{end}}],
         "server": "local-dns"
       }
     ],
@@ -42,26 +42,34 @@
     }
   ],
   "outbounds": [
-    {
+    {{range $i, $p := .Profiles}}{{if $i}},
+    {{end}}{
       "type": "vless",
-      "tag": "proxy",
-      "server": {{json .Server}},
-      "server_port": {{.Port}},
-      "uuid": {{json .UUID}},
-      "flow": {{json .Flow}},
+      "tag": {{json $p.Tag}},
+      "server": {{json $p.Server}},
+      "server_port": {{$p.Port}},
+      "uuid": {{json $p.UUID}},
+      "flow": {{json $p.Flow}},
       "tls": {
         "enabled": true,
-        "server_name": {{json .SNI}},
+        "server_name": {{json $p.SNI}},
         "utls": {
           "enabled": true,
-          "fingerprint": {{json .Fingerprint}}
+          "fingerprint": {{json $p.Fingerprint}}
         },
         "reality": {
           "enabled": true,
-          "public_key": {{json .PublicKey}},
-          "short_id": {{json .ShortID}}
+          "public_key": {{json $p.PublicKey}},
+          "short_id": {{json $p.ShortID}}
         }
       }
+    }{{end}},
+    {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": [{{range $i, $p := .Profiles}}{{if $i}}, {{end}}{{json $p.Tag}}{{end}}],
+      "default": {{json .ActiveTag}},
+      "interrupt_exist_connections": true
     },
     {
       "type": "direct",

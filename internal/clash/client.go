@@ -6,6 +6,7 @@
 package clash
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -108,4 +109,52 @@ func (c *Client) GetConnections(ctx context.Context) (*Connections, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// Proxy is the response shape of GET /proxies/<name>. For a selector
+// outbound, Now is the currently-selected sub-outbound and All lists
+// the available choices.
+type Proxy struct {
+	Type string   `json:"type"`
+	Name string   `json:"name"`
+	Now  string   `json:"now,omitempty"`
+	All  []string `json:"all,omitempty"`
+	UDP  bool     `json:"udp,omitempty"`
+}
+
+// GetProxy returns one proxy outbound by tag.
+func (c *Client) GetProxy(ctx context.Context, name string) (*Proxy, error) {
+	var p Proxy
+	if err := c.get(ctx, "/proxies/"+name, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// SelectProxy switches the named selector outbound to the given target.
+// Returns an error if the selector or target doesn't exist, or if the
+// outbound at `selector` isn't actually a selector type. Used after
+// rendering a new config so the active profile change takes effect
+// without a full sing-box reload.
+func (c *Client) SelectProxy(ctx context.Context, selector, target string) error {
+	body, err := json.Marshal(map[string]string{"name": target})
+	if err != nil {
+		return err
+	}
+	req, err := nethttp.NewRequestWithContext(ctx, "PUT",
+		c.BaseURL+"/proxies/"+selector, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.hc().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("clash PUT /proxies/%s: %s: %s", selector, resp.Status, raw)
+	}
+	return nil
 }

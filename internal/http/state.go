@@ -182,12 +182,22 @@ func (s *Server) collectState(ctx context.Context) stateResponse {
 				"name": "(missing)",
 			}}
 		} else {
-			resp.ActiveProfile = block{OK: true, Value: map[string]any{
+			val := map[string]any{
 				"id":     activeID,
 				"name":   p.Name,
 				"server": p.Server,
 				"port":   p.Port,
-			}}
+			}
+			// If sing-box is running and clash-API answers, surface the
+			// CURRENTLY-LIVE selector pick. Diverges from UCI only in
+			// the brief window between an activate-via-UI press and
+			// the next clash refresh; useful for spotting drift.
+			if s.Clash != nil {
+				if px, err := s.Clash.GetProxy(ctx, "proxy"); err == nil && px.Now != "" {
+					val["selector_now"] = px.Now
+				}
+			}
+			resp.ActiveProfile = block{OK: true, Value: val}
 		}
 	}()
 

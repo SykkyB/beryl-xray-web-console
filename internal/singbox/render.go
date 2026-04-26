@@ -1,8 +1,13 @@
 // Package singbox renders /etc/sing-box/config.json from an embedded
-// template and a panel-managed Profile, validates it via `sing-box check`,
-// and writes it atomically. Activating a profile means: render → check
-// → write → reload service. The reload itself is the caller's job
-// (internal/service.Manager.Do(ActionReload)).
+// template and the panel's saved profiles, validates it via
+// `sing-box check`, and writes it atomically.
+//
+// The rendered config always uses a sing-box `selector` outbound tagged
+// "proxy" so that switching the active profile can be done online via
+// the clash-API (`PUT /proxies/proxy {"name": "<vless-tag>"}`) without
+// a restart. The selector's `default` is the currently-active profile —
+// used both at sing-box startup and as a fallback if no clash switch
+// has happened yet.
 package singbox
 
 import (
@@ -26,18 +31,9 @@ var configTemplate string
 
 // Renderer wires the template to disk + sing-box check.
 type Renderer struct {
-	// ConfigPath is where the rendered JSON lands (typically
-	// /etc/sing-box/config.json).
-	ConfigPath string
-
-	// SingBoxBin is the binary used for `sing-box check`. Empty disables
-	// validation (useful for tests where the binary isn't present).
-	SingBoxBin string
-
-	// Runner runs sing-box check; defaults to runner.Exec{}.
-	Runner runner.Runner
-
-	// CheckTimeout caps how long `sing-box check` may take.
+	ConfigPath   string
+	SingBoxBin   string
+	Runner       runner.Runner
 	CheckTimeout time.Duration
 }
 
@@ -55,9 +51,6 @@ func (r *Renderer) checkTimeout() time.Duration {
 	return r.CheckTimeout
 }
 
-// templateFuncs adds a `json` filter so the template can produce
-// JSON-safe quoted strings without the caller worrying about embedded
-// quotes / newlines / unicode in profile fields.
 var templateFuncs = template.FuncMap{
 	"json": func(v any) (string, error) {
 		raw, err := json.Marshal(v)
@@ -68,57 +61,104 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
+// renderProfile is what ends up in the template for each VLESS outbound.
+type renderProfile struct {
+	Tag         string
+	Server      string
+	Port        int
+	UUID        string
+	Flow        string
+	SNI         string
+	Fingerprint string
+	PublicKey   string
+	ShortID     string
+}
+
+type renderData struct {
+	Profiles  []renderProfile
+	Servers   []string
+	ActiveTag string
+}
+
+// TagOf returns the stable outbound tag for a profile. Derived from the
+// profile ID so it survives renames; first 12 hex chars of the UUID
+// after stripping dashes — short enough to read in clash logs but
+// unambiguous in practice.
+func TagOf(p store.Profile) string {
+	id := strings.ReplaceAll(p.ID, "-", "")
+	if len(id) > 12 {
+		id = id[:12]
+	}
+	return "vless-" + id
+}
+
 // Render returns the JSON bytes that would land on disk for the given
-// profile. Always parses the result through json.Unmarshal as a sanity
-// check (catches a malformed template before we even try sing-box check).
-func Render(p store.Profile) ([]byte, error) {
+// list of profiles, with `activeID` selected as the selector default.
+// At least one profile is required. activeID must match one of them;
+// if it doesn't, the first profile is used as the default.
+func Render(profiles []store.Profile, activeID string) ([]byte, error) {
+	if len(profiles) == 0 {
+		return nil, fmt.Errorf("at least one profile required to render")
+	}
+
+	data := renderData{
+		Profiles: make([]renderProfile, 0, len(profiles)),
+		Servers:  make([]string, 0, len(profiles)),
+	}
+	seenServer := make(map[string]bool)
+	activeFound := false
+
+	for _, p := range profiles {
+		fp := p.Fingerprint
+		if fp == "" {
+			fp = "chrome"
+		}
+		tag := TagOf(p)
+		data.Profiles = append(data.Profiles, renderProfile{
+			Tag:         tag,
+			Server:      p.Server,
+			Port:        p.Port,
+			UUID:        p.UUID,
+			Flow:        p.Flow,
+			SNI:         p.SNI,
+			Fingerprint: fp,
+			PublicKey:   p.PublicKey,
+			ShortID:     p.ShortID,
+		})
+		if !seenServer[p.Server] {
+			data.Servers = append(data.Servers, p.Server)
+			seenServer[p.Server] = true
+		}
+		if p.ID == activeID {
+			data.ActiveTag = tag
+			activeFound = true
+		}
+	}
+	if !activeFound {
+		data.ActiveTag = data.Profiles[0].Tag
+	}
+
 	t, err := template.New("config").Funcs(templateFuncs).Parse(configTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("parse template: %w", err)
 	}
-
-	data := struct {
-		Server      string
-		Port        int
-		UUID        string
-		Flow        string
-		SNI         string
-		Fingerprint string
-		PublicKey   string
-		ShortID     string
-	}{
-		Server:      p.Server,
-		Port:        p.Port,
-		UUID:        p.UUID,
-		Flow:        p.Flow, // empty string is fine for plain VLESS
-		SNI:         p.SNI,
-		Fingerprint: p.Fingerprint,
-		PublicKey:   p.PublicKey,
-		ShortID:     p.ShortID,
-	}
-	if data.Fingerprint == "" {
-		data.Fingerprint = "chrome"
-	}
-
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("execute template: %w", err)
 	}
 
-	// Defensive parse — guarantees we never write malformed JSON to disk.
+	// Defensive parse — guarantees we never write malformed JSON.
 	var probe any
 	if err := json.Unmarshal(buf.Bytes(), &probe); err != nil {
-		return nil, fmt.Errorf("template produced invalid JSON: %w", err)
+		return nil, fmt.Errorf("template produced invalid JSON: %w\n--- output ---\n%s", err, buf.String())
 	}
 	return buf.Bytes(), nil
 }
 
-// WriteAndCheck renders the profile, runs `sing-box check` on the
-// candidate config, and only on success writes it atomically to
-// ConfigPath. Returns the captured stderr from `sing-box check` on
-// validation failure so the caller can surface it.
-func (r *Renderer) WriteAndCheck(ctx context.Context, p store.Profile) error {
-	raw, err := Render(p)
+// WriteAndCheck renders the profiles, runs `sing-box check` on the
+// candidate config, and only on success writes it atomically.
+func (r *Renderer) WriteAndCheck(ctx context.Context, profiles []store.Profile, activeID string) error {
+	raw, err := Render(profiles, activeID)
 	if err != nil {
 		return err
 	}
@@ -142,9 +182,6 @@ func (r *Renderer) WriteAndCheck(ctx context.Context, p store.Profile) error {
 	return nil
 }
 
-// checkConfig pipes raw to `sing-box check -c <tmp>` because the binary
-// can't read from stdin in the version we ship. We use a temp file in
-// the same directory as ConfigPath to avoid cross-fs issues.
 func (r *Renderer) checkConfig(ctx context.Context, raw []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, r.checkTimeout())
 	defer cancel()
