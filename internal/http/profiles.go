@@ -230,6 +230,8 @@ func (s *Server) handleProfileActivate(w nethttp.ResponseWriter, r *nethttp.Requ
 		_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
 	}
 
+	s.nudgeExitIP()
+
 	writeJSON(w, nethttp.StatusOK, map[string]any{
 		"ok":            true,
 		"active_id":     id,

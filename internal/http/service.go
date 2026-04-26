@@ -1,12 +1,28 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	nethttp "net/http"
+	"time"
 
 	"beryl-xray-web-console/internal/service"
 )
+
+// nudgeExitIP triggers an out-of-band exit-IP refresh after any action
+// that might change connectivity (service start/stop, profile change,
+// killswitch / bind toggle). Best-effort: never blocks the response.
+func (s *Server) nudgeExitIP() {
+	if s.ExitIP == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		s.ExitIP.RefreshNow(ctx)
+	}()
+}
 
 // serviceActionReq is the body of POST /api/service.
 type serviceActionReq struct {
@@ -44,6 +60,7 @@ func (s *Server) handleServiceAction(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return
 	}
+	s.nudgeExitIP()
 	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true, "action": req.Action})
 }
 
@@ -62,6 +79,7 @@ func (s *Server) handleKillswitch(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return
 	}
+	s.nudgeExitIP()
 	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true, "killswitch": req.On})
 }
 
@@ -75,5 +93,6 @@ func (s *Server) handleBindSwitch(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return
 	}
+	s.nudgeExitIP()
 	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true, "bind_switch": req.On})
 }

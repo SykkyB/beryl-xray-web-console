@@ -91,6 +91,13 @@ func (p *Poller) Start(ctx context.Context) {
 	}()
 }
 
+// RefreshNow triggers an immediate out-of-band fetch. Safe to call
+// concurrently with the background ticker — both serialize on the
+// internal mutex when writing the result.
+func (p *Poller) RefreshNow(ctx context.Context) {
+	p.fetchOnce(ctx)
+}
+
 func (p *Poller) fetchOnce(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, p.timeout())
 	defer cancel()
