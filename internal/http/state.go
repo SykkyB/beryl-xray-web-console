@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	nethttp "net/http"
+	"sync"
 	"time"
 )
 
@@ -26,55 +27,155 @@ type block struct {
 	Error string `json:"error,omitempty"`
 }
 
+// stateCacheTTL bounds how long a /api/state response may be reused
+// across concurrent pollers. Tuned to dedupe 2-3 browser tabs each on a
+// 5s interval without ever showing data older than ~1.5s. Single in-
+// flight refresh is enforced by stateRefresh — see below.
+const stateCacheTTL = 1500 * time.Millisecond
+
+// stateCache + stateRefresh form a tiny single-flight cache. Multiple
+// concurrent /api/state requests:
+//   - return the cached payload if it's still fresh
+//   - otherwise, exactly ONE goroutine refreshes; the rest wait on the
+//     refresh's done channel, then return the same fresh payload.
+// This collapses the 7 shell-outs/probe per request into 7 per ~1.5s
+// no matter how many browser tabs are polling.
+type stateCacheEntry struct {
+	payload stateResponse
+	at      time.Time
+}
+
+type stateRefreshSlot struct {
+	done    chan struct{}
+	payload stateResponse
+}
+
+type stateCache struct {
+	mu      sync.Mutex
+	entry   *stateCacheEntry
+	pending *stateRefreshSlot
+}
+
 func (s *Server) handleState(w nethttp.ResponseWriter, r *nethttp.Request) {
+	c := s.stateCache
+
+	c.mu.Lock()
+	if c.entry != nil && time.Since(c.entry.at) < stateCacheTTL {
+		payload := c.entry.payload
+		c.mu.Unlock()
+		writeJSON(w, nethttp.StatusOK, payload)
+		return
+	}
+	if c.pending != nil {
+		// Someone is already refreshing — wait for it.
+		slot := c.pending
+		c.mu.Unlock()
+		<-slot.done
+		writeJSON(w, nethttp.StatusOK, slot.payload)
+		return
+	}
+	// We're the refresher.
+	slot := &stateRefreshSlot{done: make(chan struct{})}
+	c.pending = slot
+	c.mu.Unlock()
+
+	// Use a context tied to this request, but with our own cap so the
+	// whole probe set has a shared deadline.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
+	payload := s.collectState(ctx)
+
+	c.mu.Lock()
+	c.entry = &stateCacheEntry{payload: payload, at: time.Now()}
+	c.pending = nil
+	slot.payload = payload
+	c.mu.Unlock()
+	close(slot.done)
+
+	writeJSON(w, nethttp.StatusOK, payload)
+}
+
+// collectState runs every state probe in parallel — wall time becomes
+// max(individual probe times) instead of sum, and CPU pressure becomes
+// the same total work spread across both cores.
+func (s *Server) collectState(ctx context.Context) stateResponse {
 	resp := stateResponse{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	if running, err := s.Probe.SingBoxRunning(ctx); err != nil {
-		resp.Service = block{Error: err.Error()}
-	} else {
-		resp.Service = block{OK: true, Value: running}
-	}
+	var wg sync.WaitGroup
+	wg.Add(7)
 
-	if up, err := s.Probe.TunUp(ctx, "sing-tun"); err != nil {
-		resp.TUN = block{Error: err.Error()}
-	} else {
-		resp.TUN = block{OK: true, Value: up}
-	}
+	go func() {
+		defer wg.Done()
+		if running, err := s.Probe.SingBoxRunning(ctx); err != nil {
+			resp.Service = block{Error: err.Error()}
+		} else {
+			resp.Service = block{OK: true, Value: running}
+		}
+	}()
 
-	if pos, err := s.Probe.SwitchPosition(ctx); err != nil {
-		resp.PhysicalSwitch = block{Error: err.Error()}
-	} else {
-		resp.PhysicalSwitch = block{OK: true, Value: pos}
-	}
+	go func() {
+		defer wg.Done()
+		if up, err := s.Probe.TunUp(ctx, "sing-tun"); err != nil {
+			resp.TUN = block{Error: err.Error()}
+		} else {
+			resp.TUN = block{OK: true, Value: up}
+		}
+	}()
 
-	if v, err := s.UCI.GetBool(ctx, "sing-box.config.killswitch"); err != nil {
-		resp.Killswitch = block{Error: err.Error()}
-	} else {
-		resp.Killswitch = block{OK: true, Value: v}
-	}
+	go func() {
+		defer wg.Done()
+		if pos, err := s.Probe.SwitchPosition(ctx); err != nil {
+			resp.PhysicalSwitch = block{Error: err.Error()}
+		} else {
+			resp.PhysicalSwitch = block{OK: true, Value: pos}
+		}
+	}()
 
-	if v, err := s.UCI.GetBool(ctx, "sing-box.config.bind_switch"); err != nil {
-		resp.BindSwitch = block{Error: err.Error()}
-	} else {
-		resp.BindSwitch = block{OK: true, Value: v}
-	}
+	go func() {
+		defer wg.Done()
+		if v, err := s.UCI.GetBool(ctx, "sing-box.config.killswitch"); err != nil {
+			resp.Killswitch = block{Error: err.Error()}
+		} else {
+			resp.Killswitch = block{OK: true, Value: v}
+		}
+	}()
 
-	if v, err := s.UCI.GetBool(ctx, "sing-box.config.enabled"); err != nil {
-		resp.Enabled = block{Error: err.Error()}
-	} else {
-		resp.Enabled = block{OK: true, Value: v}
-	}
+	go func() {
+		defer wg.Done()
+		if v, err := s.UCI.GetBool(ctx, "sing-box.config.bind_switch"); err != nil {
+			resp.BindSwitch = block{Error: err.Error()}
+		} else {
+			resp.BindSwitch = block{OK: true, Value: v}
+		}
+	}()
 
-	if activeID, err := s.UCI.Get(ctx, uciActiveKey); err != nil {
-		resp.ActiveProfile = block{Error: err.Error()}
-	} else if activeID == "" {
-		resp.ActiveProfile = block{OK: true, Value: nil}
-	} else if s.Profiles != nil {
+	go func() {
+		defer wg.Done()
+		if v, err := s.UCI.GetBool(ctx, "sing-box.config.enabled"); err != nil {
+			resp.Enabled = block{Error: err.Error()}
+		} else {
+			resp.Enabled = block{OK: true, Value: v}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		activeID, err := s.UCI.Get(ctx, uciActiveKey)
+		if err != nil {
+			resp.ActiveProfile = block{Error: err.Error()}
+			return
+		}
+		if activeID == "" {
+			resp.ActiveProfile = block{OK: true, Value: nil}
+			return
+		}
+		if s.Profiles == nil {
+			resp.ActiveProfile = block{OK: true, Value: map[string]any{"id": activeID}}
+			return
+		}
 		if p, err := s.Profiles.Get(activeID); err != nil {
 			resp.ActiveProfile = block{OK: true, Value: map[string]any{
 				"id":   activeID,
@@ -88,7 +189,8 @@ func (s *Server) handleState(w nethttp.ResponseWriter, r *nethttp.Request) {
 				"port":   p.Port,
 			}}
 		}
-	}
+	}()
 
-	writeJSON(w, nethttp.StatusOK, resp)
+	wg.Wait()
+	return resp
 }

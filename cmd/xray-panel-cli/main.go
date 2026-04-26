@@ -37,7 +37,7 @@ func main() {
 		log.Fatalf("refusing to start: %v", err)
 	}
 
-	srv := &panelhttp.Server{
+	srv := panelhttp.NewServer(panelhttp.Server{
 		Cfg: cfg,
 		Service: &service.Manager{
 			InitScript: cfg.SingBoxInit,
@@ -54,7 +54,7 @@ func main() {
 			SingBoxBin:   cfg.SingBoxBin,
 			CheckTimeout: 10 * time.Second,
 		},
-	}
+	})
 
 	// Force tcp4: Go's default "tcp" opens an AF_INET6 dual-stack
 	// socket, and on the OpenWrt kernel running on Beryl, a dual-stack

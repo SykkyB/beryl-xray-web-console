@@ -26,6 +26,20 @@ type Server struct {
 	Probe    *sysprobe.Probe
 	Profiles *store.Profiles
 	Renderer *singbox.Renderer
+
+	// stateCache is a tiny single-flight cache around handleState so
+	// concurrent browser tabs don't multiply the underlying probe load.
+	// Lazily initialised on first request — see state.go.
+	stateCache *stateCache
+}
+
+// NewServer returns *Server with internal caches initialised. Pass it
+// the config-shaped fields you'd otherwise set on a literal struct;
+// internal/private fields (like the state cache) are filled in here.
+func NewServer(seed Server) *Server {
+	s := seed
+	s.stateCache = &stateCache{}
+	return &s
 }
 
 // Handler returns a net/http handler with all routes registered, wrapped
