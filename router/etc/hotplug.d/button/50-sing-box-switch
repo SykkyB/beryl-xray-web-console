@@ -23,12 +23,16 @@ logger -t sing-box-switch "physical switch action=$ACTION"
 
 case "$ACTION" in
 	pressed)
-		/etc/init.d/sing-box start
+		/etc/init.d/sing-box start || true
 		;;
 	released)
-		/etc/init.d/sing-box stop
+		/etc/init.d/sing-box stop || true
 		# Physical OFF means user wants normal routing; drop killswitch
-		# even if UCI killswitch=1.
-		ip rule del priority 5500 2>/dev/null
+		# even if UCI killswitch=1. Suppress the "no such rule" error
+		# (ip rule del exits 2 with RTNETLINK error) — callers like the
+		# init's bind_switch_on/off propagate our exit code as their own.
+		ip rule del priority 5500 2>/dev/null || true
 		;;
 esac
+
+exit 0

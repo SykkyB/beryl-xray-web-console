@@ -39,7 +39,10 @@ func main() {
 		Cfg: cfg,
 		Service: &service.Manager{
 			InitScript: cfg.SingBoxInit,
-			Timeout:    15 * time.Second,
+			// 45s: init's apply_lan_routing waits up to 15s for sing-tun
+			// to appear after spawning sing-box, plus extra slack for the
+			// procd handoff and iptables ops.
+			Timeout: 45 * time.Second,
 		},
 		UCI:   &ucitool.Tool{Timeout: 5 * time.Second},
 		Probe: &sysprobe.Probe{Timeout: 5 * time.Second},

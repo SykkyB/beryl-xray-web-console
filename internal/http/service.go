@@ -23,6 +23,23 @@ func (s *Server) handleServiceAction(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeErr(w, nethttp.StatusBadRequest, fmt.Errorf("invalid action %q (allowed: start|stop|restart|reload)", req.Action))
 		return
 	}
+
+	// Guard: when bind_switch is ON and the physical switch is OFF, the
+	// init script intentionally refuses to start sing-box (return 1 in
+	// start_service). procd doesn't propagate that as a non-zero exit
+	// from `/etc/init.d/sing-box start`, so without this pre-check the
+	// UI would show a misleading "ok" while the service stays stopped.
+	if req.Action == "start" || req.Action == "restart" || req.Action == "reload" {
+		if bindOn, err := s.UCI.GetBool(r.Context(), "sing-box.config.bind_switch"); err == nil && bindOn {
+			if sw, err := s.Probe.SwitchPosition(r.Context()); err == nil && sw == "off" {
+				writeErr(w, nethttp.StatusConflict, fmt.Errorf(
+					"%s blocked: bind_switch=on and physical switch is OFF — flip the switch ON, or disable bind_switch first",
+					req.Action))
+				return
+			}
+		}
+	}
+
 	if err := s.Service.Do(r.Context(), service.Action(req.Action)); err != nil {
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return

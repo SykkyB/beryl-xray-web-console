@@ -210,19 +210,127 @@ curl https://ifconfig.me
 
 ## Поведенческая матрица (как у GL.iNet WG/OVPN)
 
-| `enabled` | `killswitch` | `bind_switch` | physical switch | LAN получает интернет... |
+Три входных параметра в UCI (`/etc/config/sing-box`): `enabled`, `killswitch`, `bind_switch`. Плюс физический переключатель на корпусе. Дальше — как это всё взаимодействует.
+
+### Таблица 1. Steady state — что видит LAN при текущих настройках
+
+| # | enabled | killswitch | bind_switch | phys.switch | sing-box | LAN видит |
+|---|---|---|---|---|---|---|
+| 1 | 1 | 0 | 0 | — | running | через тоннель (exit IP сервера, например `176.221.192.204`) |
+| 2 | 1 | 0 | 0 | — | stopped | **прямой WAN bypass** (carrier / home IP) |
+| 3 | 1 | **1** | 0 | — | running | через тоннель; если тоннель упадёт → blackhole |
+| 4 | 1 | **1** | 0 | — | stopped | **blackhole** (killswitch активен независимо от sing-box) |
+| 5 | 1 | 0 | **1** | ON | running | через тоннель |
+| 6 | 1 | 0 | **1** | OFF | stopped | прямой WAN bypass |
+| 7 | 1 | **1** | **1** | ON | running | через тоннель; падение → blackhole |
+| 8 | 1 | **1** | **1** | OFF | stopped | **blackhole** |
+| 9 | 0 | * | * | * | (не стартует на boot) | прямой WAN bypass или blackhole — по killswitch |
+
+«—» = неважно. * = неважно. **Правило:** killswitch — независимый toggle. Если он ON, LAN дропается **всегда, когда тоннель не работает**, неважно почему (manual stop / sing-box упал / bind+phys=OFF).
+
+### Таблица 2. Действия — что произойдёт при нажатии
+
+| Действие | Контекст | Эффект на sing-box | Эффект на LAN правила |
+|---|---|---|---|
+| **Start** | bind_switch=0 | стартует | `prio 5000` → tun |
+| **Start** | bind_switch=1, phys=ON | стартует | `prio 5000` → tun |
+| **Start** | bind_switch=1, phys=**OFF** | **отказ 409** «physical switch is OFF» | без изменений |
+| **Stop** | любой | останавливается | `prio 5000` снимается; killswitch (5500) — по UCI |
+| **Restart / Reload** | те же гарды что и Start | stop + start | то же |
+| **Killswitch ON** | любой | без изменений | `prio 5500 blackhole iif br-lan` ставится сразу |
+| **Killswitch OFF** | любой | без изменений | `prio 5500` снимается |
+| **Bind switch ON** | phys=ON | если sing-box stopped → стартует | `prio 5000` появится |
+| **Bind switch ON** | phys=OFF | если sing-box running → останавливается | `prio 5000` снимается |
+| **Bind switch OFF** | любой | без изменений | без изменений |
+
+### Таблица 3. Физический переключатель (hotplug)
+
+| Событие | bind_switch | sw_func GL.iNet ≠ vpn/wireguard/... | Что hotplug делает |
+|---|---|---|---|
+| Flip → ON  (`pressed`) | 1 | да (свободен) | `/etc/init.d/sing-box start` |
+| Flip → OFF (`released`) | 1 | да (свободен) | `/etc/init.d/sing-box stop` + снять `prio 5500` |
+| Flip любой | 0 | — | пропускает (выход 0) |
+| Flip любой | 1 | привязан к WG/OVPN/Tor/AdGuard/Wi-Fi | пропускает (логирует, не вмешивается) |
+
+Сценарий «kill всё-таки активен» при flip→OFF: hotplug **снимает** `prio 5500` принудительно, потому что физический OFF трактуется как «хочу обычный роутер». То есть **физический переключатель в OFF превалирует над UCI killswitch=1**. Сделано чтобы не подвешивать LAN, когда юзер физически выключил VPN.
+
+### Таблица 4. Boot-time (после ребута роутера)
+
+| UCI enabled | bind_switch | phys.switch | killswitch | После загрузки |
 |---|---|---|---|---|
-| 0 | — | — | — | как обычный роутер (прямой WAN) |
-| 1 | 0 | 0 | — | через тоннель; при падении → автобайпас в WAN |
-| 1 | 1 | 0 | — | через тоннель; при падении → обрыв (killswitch) |
-| 1 | 0 | 1 | ON | через тоннель |
-| 1 | 0 | 1 | OFF | как обычный роутер (прямой WAN) |
-| 1 | 1 | 1 | ON | через тоннель; при падении → обрыв |
-| 1 | 1 | 1 | OFF | прямой WAN (физ. OFF опережает UCI killswitch) |
+| 1 | 0 | — | * | sing-box стартует автоматически (S99). LAN → tun. Killswitch как настроен. |
+| 1 | 1 | ON | * | sing-box стартует. LAN → tun. |
+| 1 | 1 | OFF | 0 | sing-box не стартует (gated). LAN → прямой WAN. |
+| 1 | 1 | OFF | 1 | sing-box не стартует. LAN → blackhole (killswitch). |
+| 0 | — | — | * | sing-box не стартует. LAN → прямой WAN или blackhole — по killswitch. |
 
-**Что считается "LAN":** всё, что входит на роутер через `iif br-lan`. На GL.iNet MT3000 это и проводной LAN, и Wi-Fi 2.4/5 ГГц (бриджуются в `br-lan` стоковой прошивкой). Guest-сеть (`br-guest`), wgserver / ovpnserver bridges — **не покрываются**, добавлять явно.
+### Что считается "LAN"
 
-**Уплинк:** `auto_detect_interface: true` — sing-box подхватывает default route автоматически. Подключил роутер к Wi-Fi отеля / переткнул USB-tethering / воткнул ethernet — тоннель сам переустановится через новый WAN.
+Всё, что входит на роутер через `iif br-lan`. На GL.iNet MT3000 это и проводной LAN, и Wi-Fi 2.4/5 ГГц (бриджуются в `br-lan` стоковой прошивкой). Guest-сеть (`br-guest`), wgserver / ovpnserver bridges — **не покрываются**, добавлять явно.
+
+### Уплинк
+
+`auto_detect_interface: true` — sing-box подхватывает default route автоматически. Подключил роутер к Wi-Fi отеля / переткнул USB-tethering / воткнул ethernet — тоннель сам переустановится через новый WAN.
+
+---
+
+## Killswitch — детали (как у GL.iNet и как у нас)
+
+### Stock GL.iNet killswitch
+
+Три слоя инфраструктуры, работающие вместе:
+
+**1. UCI декларация — `/etc/config/route_policy`**
+
+Каждый WG/OVPN-клиент описан правилом с полями `via_type`, `via` (имя интерфейса), `mark` (свой fwmark, например `0x1000`), `killswitch` (та самая галка «Block non-VPN traffic» в UI), `enabled`.
+
+**2. Маркировка — `iptables -t mangle PREROUTING` chain `ROUTE_POLICY`**
+
+Сначала `connmark restore` (для ESTABLISHED соединений берётся прежний mark), потом каждое включённое route_policy правило ставит свой mark (`0x1000` для VPN), в конце `TUNNEL100_ROUTE_POLICY` ставит `0x8000` («novpn → main») всему, что не сматчилось.
+
+**3. Маршрутизация — `ip rule` с пометкой `gl_vpn_rules` в `/etc/config/network`**
+
+```
+prio 6000  fwmark 0x8000/0xf000           lookup main          # novpn → main → WAN
+prio 9000  not fwmark 0/0xf000            lookup main          # mark != 0 → main fallback
+prio 9910  not fwmark 0/0xf000            blackhole            # mark != 0 и нет маршрута → kill
+prio 9920  iif br-lan                     blackhole            # ultimate fail-safe для LAN
+```
+
+Когда VPN-клиент `wgclient1` поднимается, его network-скрипт **дополнительно** добавляет `prio ~7000 fwmark 0x1000/0xf000 lookup <wg-table>` и в эту таблицу — `default via <wg-peer> dev wgclient1`. Если `killswitch=1`, ставится ещё `prio ~9100 fwmark 0x1000 blackhole` РАНЬШЕ rule prio 9000 (lookup main fallback).
+
+### Сценарий «killswitch ON, VPN ещё не подключился»
+
+- Интерфейс `wgclient1` ещё не поднят (VPN-клиент в процессе хендшейка), `<wg-table>` пуста.
+- LAN-пакет получает mark `0x1000` (по route_policy rule).
+- `ip rule fwmark 0x1000 → wg-table` сматчился, таблица пуста → fallthrough.
+- При `killswitch=1`: ловит `prio 9100 fwmark 0x1000 blackhole` → пакет дропается.
+- При `killswitch=0`: fallthrough до `prio 9000 lookup main` → пакет уходит через WAN (утечка).
+
+То есть GL.iNet killswitch — **отдельное blackhole-правило**, которое стоит с момента включения route_policy rule и пока VPN не установит соединение, фактически дропая весь трафик в это окно.
+
+### Наш sing-box killswitch
+
+Тот же паттерн, но проще, потому что у нас один профиль и нет необходимости в per-tunnel fwmark схемах:
+
+```
+prio 5000  iif br-lan  lookup 2022      # LAN → table 2022 (default = sing-tun)
+prio 5500  iif br-lan  blackhole         # killswitch (если UCI killswitch=1)
+```
+
+Когда `sing-box` падает / только запускается / ещё не установил VLESS-сессию:
+- `sing-tun` либо отсутствует, либо есть, но в `table 2022` нет default (sing-box чистит при stop).
+- `prio 5000` сматчился → table пустая → **fallthrough**.
+- Если есть `prio 5500` → blackhole → пакет дропается.
+- Если нет → fallthrough до GL.iNet'овского `prio 6000 fwmark 0x8000 lookup main` → main → WAN bypass.
+
+**Поведение полностью идентично GL.iNet'у**, включая «killswitch включён, VPN ещё не поднялся → LAN молчит».
+
+### Отличия от GL.iNet
+
+- **Match по `iif br-lan`**, не по fwmark. Не маркируем сами LAN-трафик — просто перехватываем по интерфейсу. Проще, не конфликтует с `TUNNEL100_ROUTE_POLICY`, который продолжает ставить `0x8000` параллельно (для tun-routed трафика mark становится «no-op»).
+- **Физ. переключатель в OFF** при `bind_switch=1` принудительно снимает `prio 5500`, чтобы LAN не висел даже при UCI `killswitch=1`. У GL.iNet физ. переключатель отключает route_policy rule целиком — эффект тот же (нет VPN-rule → нет blackhole).
+- **Не используем `route_policy`** — он жёстко завязан на их WG/OVPN инфраструктуру. Мы рядом, не вместо.
 
 ---
 

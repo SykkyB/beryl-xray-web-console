@@ -41,6 +41,8 @@ scp $SSH_OPTS $SCP_OPTS \
 	"$BIN" \
 	"$REPO_ROOT/deploy/xray-panel-cli.init" \
 	"$REPO_ROOT/deploy/panel.example.yaml" \
+	"$REPO_ROOT/router/etc/init.d/sing-box" \
+	"$REPO_ROOT/router/etc/hotplug.d/button/50-sing-box-switch" \
 	"$TARGET:/tmp/"
 
 echo ">>> installing on $TARGET"
@@ -67,6 +69,13 @@ chmod 0755                  /usr/bin/xray-panel-cli
 cp /tmp/xray-panel-cli.init /etc/init.d/xray-panel-cli
 chmod 0755                  /etc/init.d/xray-panel-cli
 
+# Refresh the sing-box init + hotplug bits the panel relies on.
+mkdir -p /etc/hotplug.d/button
+cp /tmp/sing-box                  /etc/init.d/sing-box
+chmod 0755                        /etc/init.d/sing-box
+cp /tmp/50-sing-box-switch        /etc/hotplug.d/button/50-sing-box-switch
+chmod 0755                        /etc/hotplug.d/button/50-sing-box-switch
+
 if [ ! -f /etc/xray-panel-cli/panel.yaml ]; then
 	cp /tmp/panel.example.yaml /etc/xray-panel-cli/panel.yaml
 	chmod 0600                 /etc/xray-panel-cli/panel.yaml
@@ -79,7 +88,8 @@ if [ ! -f /etc/xray-panel-cli/panel.yaml ]; then
 fi
 
 # Clean up tmp drops.
-rm -f /tmp/xray-panel-cli /tmp/xray-panel-cli.init /tmp/panel.example.yaml
+rm -f /tmp/xray-panel-cli /tmp/xray-panel-cli.init /tmp/panel.example.yaml \
+      /tmp/sing-box /tmp/50-sing-box-switch
 
 # If the service is already enabled+running, restart it to pick up the
 # new binary. Don't auto-start the first install: panel.yaml still has
