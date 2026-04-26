@@ -49,6 +49,11 @@ type Config struct {
 	// (traffic, connections, latency tests) without restarting sing-box.
 	ClashAPI string `yaml:"clash_api"`
 
+	// ExitIPURL is the URL the background poller hits to discover the
+	// effective public IP. Optional — defaults to "https://api.ipify.org"
+	// in main.go if left empty. The body must be the raw IP string.
+	ExitIPURL string `yaml:"exit_ip_url,omitempty"`
+
 	Auth AuthConfig `yaml:"auth"`
 }
 

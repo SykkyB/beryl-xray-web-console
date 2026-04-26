@@ -232,13 +232,102 @@
         });
     }
 
+    // ── live + logs ─────────────────────────────────────────────────────
+
+    function fmtBytes(n) {
+        if (!n || n < 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0;
+        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        return n.toFixed(n >= 100 || i === 0 ? 0 : (n >= 10 ? 1 : 2)) + " " + units[i];
+    }
+
+    function fmtRate(bytesPerSec) {
+        if (!bytesPerSec) return "0 B/s";
+        return fmtBytes(bytesPerSec) + "/s";
+    }
+
+    async function fetchLive() {
+        try {
+            const r = await fetch("/api/live", { credentials: "same-origin" });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const s = await r.json();
+
+            // Exit IP
+            renderBlock(cell("live_exit_ip"), s.exit_ip, (v) => {
+                if (!v || !v.ip) return { cls: "pill-muted", text: "—" };
+                return { cls: "pill-ok", text: v.ip };
+            });
+
+            // Traffic
+            const t = s.traffic && s.traffic.value;
+            const ok = s.traffic && s.traffic.ok;
+            const upRate   = ok ? fmtRate(t.up_rate)   : "—";
+            const downRate = ok ? fmtRate(t.down_rate) : "—";
+            const conns    = ok ? String(t.connections) : "—";
+            setPill(cell("live_up_rate"),   ok ? (t.up_rate   > 0 ? "pill-ok" : "pill-muted") : "pill-warn", upRate);
+            setPill(cell("live_down_rate"), ok ? (t.down_rate > 0 ? "pill-ok" : "pill-muted") : "pill-warn", downRate);
+            setPill(cell("live_conn_count"),ok ? "pill-ok" : "pill-muted", conns);
+
+            const totals = $("#live-totals");
+            if (ok) {
+                totals.textContent = "↑ " + fmtBytes(t.up_total) + "  ↓ " + fmtBytes(t.down_total) + "  · total since sing-box start";
+            } else {
+                totals.textContent = (s.traffic && s.traffic.error) ? ("error: " + s.traffic.error) : "—";
+            }
+
+            // Top flows
+            const tbody = $("#flow-table tbody");
+            const flows = (s.top_flows && s.top_flows.value) || [];
+            if (flows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="muted">No active connections.</td></tr>`;
+            } else {
+                tbody.innerHTML = flows.map((f) => `
+                    <tr>
+                        <td>
+                            <div class="flow-host">${escapeHTML(f.host || f.destination)}</div>
+                            ${f.host ? `<div class="flow-dest">${escapeHTML(f.destination)}</div>` : ""}
+                        </td>
+                        <td>${escapeHTML(f.network || "")}</td>
+                        <td class="num">${fmtBytes(f.up)}</td>
+                        <td class="num">${fmtBytes(f.down)}</td>
+                    </tr>
+                `).join("");
+            }
+        } catch (err) {
+            $("#live-totals").textContent = "Failed to load /api/live: " + err.message;
+        }
+    }
+
+    async function fetchLogs() {
+        const view = $("#log-view");
+        const wasAtBottom = (view.scrollHeight - view.scrollTop - view.clientHeight) < 8;
+        try {
+            const r = await fetch("/api/logs?lines=200", { credentials: "same-origin" });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const data = await r.json();
+            view.textContent = (data.lines || []).join("\n") || "(empty)";
+            const autoScroll = $("#log-autoscroll").checked;
+            if (autoScroll && wasAtBottom) {
+                view.scrollTop = view.scrollHeight;
+            }
+        } catch (err) {
+            view.textContent = "Failed to load logs: " + err.message;
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
         bindToggle("killswitch",  "Killswitch");
         bindToggle("bind_switch", "Bind switch");
         $$("button.btn-action").forEach((b) => {
             if (b.dataset.action) bindAction(b);
         });
-        $("#refresh").addEventListener("click", () => { fetchState(); fetchProfiles(); });
+        $("#refresh").addEventListener("click", () => {
+            fetchState();
+            fetchProfiles();
+            fetchLive();
+            fetchLogs();
+        });
         $("#vless-import").addEventListener("click", importVless);
 
         // Profile row buttons are added dynamically — delegate.
@@ -249,7 +338,21 @@
 
         fetchState();
         fetchProfiles();
-        setInterval(fetchState, 5000);
+        fetchLive();
+        fetchLogs();
+
+        setInterval(fetchState,    5000);
         setInterval(fetchProfiles, 15000);
+        setInterval(fetchLive,     2000);
+
+        // Logs auto-refresh: every 3s when checkbox is ticked.
+        let logTimer = setInterval(fetchLogs, 3000);
+        $("#log-autorefresh").addEventListener("change", (e) => {
+            clearInterval(logTimer);
+            if (e.target.checked) {
+                logTimer = setInterval(fetchLogs, 3000);
+                fetchLogs();
+            }
+        });
     });
 })();

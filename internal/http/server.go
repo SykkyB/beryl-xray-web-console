@@ -8,7 +8,9 @@ import (
 	nethttp "net/http"
 	"runtime/debug"
 
+	"beryl-xray-web-console/internal/clash"
 	"beryl-xray-web-console/internal/config"
+	"beryl-xray-web-console/internal/exitip"
 	"beryl-xray-web-console/internal/service"
 	"beryl-xray-web-console/internal/singbox"
 	"beryl-xray-web-console/internal/store"
@@ -26,11 +28,14 @@ type Server struct {
 	Probe    *sysprobe.Probe
 	Profiles *store.Profiles
 	Renderer *singbox.Renderer
+	Clash    *clash.Client
+	ExitIP   *exitip.Poller
 
-	// stateCache is a tiny single-flight cache around handleState so
-	// concurrent browser tabs don't multiply the underlying probe load.
-	// Lazily initialised on first request — see state.go.
+	// stateCache is a single-flight cache around handleState; liveCache
+	// does the same for handleLive. Both initialised by NewServer so
+	// the handlers don't race on lazy creation.
 	stateCache *stateCache
+	liveCache  *liveCache
 }
 
 // NewServer returns *Server with internal caches initialised. Pass it
@@ -39,6 +44,7 @@ type Server struct {
 func NewServer(seed Server) *Server {
 	s := seed
 	s.stateCache = &stateCache{}
+	s.liveCache = &liveCache{}
 	return &s
 }
 
@@ -55,6 +61,8 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("POST /api/profiles/import-vless", s.handleProfilesImportVless)
 	mux.HandleFunc("DELETE /api/profiles/{id}", s.handleProfileDelete)
 	mux.HandleFunc("POST /api/profiles/{id}/activate", s.handleProfileActivate)
+	mux.HandleFunc("GET /api/live", s.handleLive)
+	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	registerUIRoutes(mux)
 	return BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
 }

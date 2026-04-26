@@ -128,6 +128,72 @@
             </div>
         </section>
 
+        <!-- Live -->
+        <section class="card" data-card="live">
+            <div class="card-head">
+                <h2>Live</h2>
+                <div class="status-row">
+                    <span class="status-item">
+                        <span class="status-label">Exit IP</span>
+                        <span data-key="live_exit_ip" class="pill pill-muted">…</span>
+                    </span>
+                    <span class="status-item">
+                        <span class="status-label">Up rate</span>
+                        <span data-key="live_up_rate" class="pill pill-muted">…</span>
+                    </span>
+                    <span class="status-item">
+                        <span class="status-label">Down rate</span>
+                        <span data-key="live_down_rate" class="pill pill-muted">…</span>
+                    </span>
+                    <span class="status-item">
+                        <span class="status-label">Active</span>
+                        <span data-key="live_conn_count" class="pill pill-muted">…</span>
+                    </span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="totals-row muted" id="live-totals">— total since start</div>
+
+                <table class="flow-table" id="flow-table">
+                    <thead>
+                        <tr>
+                            <th>Host / destination</th>
+                            <th>Net</th>
+                            <th class="num">Up</th>
+                            <th class="num">Down</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="4" class="muted">Loading…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Logs -->
+        <section class="card" data-card="logs">
+            <div class="card-head">
+                <h2>Logs</h2>
+                <div class="status-row">
+                    <span class="status-item">
+                        <label class="toggle-inline">
+                            <input type="checkbox" id="log-autoscroll" checked>
+                            <span>Auto-scroll</span>
+                        </label>
+                    </span>
+                    <span class="status-item">
+                        <label class="toggle-inline">
+                            <input type="checkbox" id="log-autorefresh" checked>
+                            <span>Auto-refresh (3s)</span>
+                        </label>
+                    </span>
+                </div>
+            </div>
+            <div class="card-body">
+                <pre id="log-view" class="log-view">Loading logs…</pre>
+            </div>
+        </section>
+
         <p id="action-result" class="action-result"></p>
     </main>
 

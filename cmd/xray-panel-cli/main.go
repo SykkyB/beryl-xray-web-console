@@ -15,7 +15,9 @@ import (
 	"syscall"
 	"time"
 
+	"beryl-xray-web-console/internal/clash"
 	"beryl-xray-web-console/internal/config"
+	"beryl-xray-web-console/internal/exitip"
 	panelhttp "beryl-xray-web-console/internal/http"
 	"beryl-xray-web-console/internal/service"
 	"beryl-xray-web-console/internal/singbox"
@@ -37,6 +39,16 @@ func main() {
 		log.Fatalf("refusing to start: %v", err)
 	}
 
+	exitIPURL := cfg.ExitIPURL
+	if exitIPURL == "" {
+		exitIPURL = "https://api.ipify.org"
+	}
+	exitIP := &exitip.Poller{
+		URL:      exitIPURL,
+		Interval: 30 * time.Second,
+		Timeout:  8 * time.Second,
+	}
+
 	srv := panelhttp.NewServer(panelhttp.Server{
 		Cfg: cfg,
 		Service: &service.Manager{
@@ -54,6 +66,8 @@ func main() {
 			SingBoxBin:   cfg.SingBoxBin,
 			CheckTimeout: 10 * time.Second,
 		},
+		Clash:  &clash.Client{BaseURL: "http://" + cfg.ClashAPI, Timeout: 5 * time.Second},
+		ExitIP: exitIP,
 	})
 
 	// Force tcp4: Go's default "tcp" opens an AF_INET6 dual-stack
@@ -70,6 +84,10 @@ func main() {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+	exitIP.Start(rootCtx)
 
 	go func() {
 		log.Printf("xray-panel-cli listening on %s (tcp4)", cfg.Listen)
