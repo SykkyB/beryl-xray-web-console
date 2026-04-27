@@ -62,28 +62,40 @@ func Parse(s string) (*URL, error) {
 	q := u.Query()
 
 	// We only support Reality + plain TCP + no extra encryption today.
+	// Error messages are written long-form because they show up verbatim
+	// in the panel UI when a paste fails — the more obvious it is what
+	// went wrong, the less guessing the user has to do.
 	if sec := q.Get("security"); sec != "" && sec != "reality" {
-		return nil, fmt.Errorf("only security=reality is supported (got %q)", sec)
+		return nil, fmt.Errorf(
+			"this URL uses security=%q, but xray-panel-cli only supports VLESS+Reality. "+
+				"Look for a config with security=reality in the URL.", sec)
 	}
 	if t := q.Get("type"); t != "" && t != "tcp" {
-		return nil, fmt.Errorf("only type=tcp is supported (got %q)", t)
+		return nil, fmt.Errorf(
+			"this URL uses transport type=%q (e.g. WebSocket / gRPC / XHTTP). "+
+				"xray-panel-cli only supports VLESS+Reality+Vision over plain TCP. "+
+				"Look for a config with type=tcp.", t)
 	}
 	if enc := q.Get("encryption"); enc != "" && enc != "none" {
-		return nil, fmt.Errorf("only encryption=none is supported (got %q)", enc)
+		return nil, fmt.Errorf(
+			"this URL uses encryption=%q; only encryption=none works with VLESS+Reality.", enc)
 	}
 
+	// pbk (Reality public key) is the one truly required Reality field —
+	// without it the handshake can't complete.
 	pbk := q.Get("pbk")
 	if pbk == "" {
-		return nil, fmt.Errorf("missing pbk (Reality public key)")
+		return nil, fmt.Errorf(
+			"missing pbk= (Reality public key). " +
+				"This URL is missing the Reality handshake credentials — " +
+				"xray-panel-cli cannot use it.")
 	}
+	// sid (short id) and sni (server name) are technically optional in
+	// the Reality spec — a server can be configured with an empty
+	// shortIds list and most accept SNI from the URL or from the server
+	// hostname. We let them through and let sing-box decide.
 	sid := q.Get("sid")
-	if sid == "" {
-		return nil, fmt.Errorf("missing sid (Reality short id)")
-	}
 	sni := q.Get("sni")
-	if sni == "" {
-		return nil, fmt.Errorf("missing sni (Reality server name)")
-	}
 
 	name := u.Fragment
 	if decoded, err := url.QueryUnescape(name); err == nil {

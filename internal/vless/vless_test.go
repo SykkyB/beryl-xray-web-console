@@ -71,15 +71,13 @@ func TestParse_Errors(t *testing.T) {
 		wantErr string
 	}{
 		{"not vless", "https://example.com/", "not a vless"},
-		{"missing UUID", "vless://@host:443?security=reality&pbk=x&sid=y&sni=z", "missing UUID"},
-		{"missing host", "vless://UUID@:443?security=reality&pbk=x&sid=y&sni=z", "missing host"},
-		{"missing port", "vless://UUID@host?security=reality&pbk=x&sid=y&sni=z", "missing port"},
-		{"bad port", "vless://UUID@host:99999?security=reality&pbk=x&sid=y&sni=z", "invalid port"},
-		{"wrong security", "vless://UUID@host:443?security=tls&pbk=x&sid=y&sni=z", "security=reality"},
-		{"wrong type", "vless://UUID@host:443?security=reality&type=ws&pbk=x&sid=y&sni=z", "type=tcp"},
-		{"missing pbk", "vless://UUID@host:443?security=reality&sid=y&sni=z", "missing pbk"},
-		{"missing sid", "vless://UUID@host:443?security=reality&pbk=x&sni=z", "missing sid"},
-		{"missing sni", "vless://UUID@host:443?security=reality&pbk=x&sid=y", "missing sni"},
+		{"missing UUID", "vless://@host:443?security=reality&pbk=x", "missing UUID"},
+		{"missing host", "vless://UUID@:443?security=reality&pbk=x", "missing host"},
+		{"missing port", "vless://UUID@host?security=reality&pbk=x", "missing port"},
+		{"bad port", "vless://UUID@host:99999?security=reality&pbk=x", "invalid port"},
+		{"wrong security", "vless://UUID@host:443?security=tls&pbk=x", "security=\"tls\""},
+		{"wrong type", "vless://UUID@host:443?security=reality&type=ws&pbk=x", "transport type=\"ws\""},
+		{"missing pbk", "vless://UUID@host:443?security=reality", "missing pbk"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -91,5 +89,20 @@ func TestParse_Errors(t *testing.T) {
 				t.Errorf("err = %q, want substring %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+// sid and sni are now optional. URL must still parse cleanly; downstream
+// (sing-box check) will catch any actual mismatches.
+func TestParse_AcceptsMissingSidAndSni(t *testing.T) {
+	v, err := Parse("vless://UUID@host:443?security=reality&pbk=PBK#name")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if v.PublicKey != "PBK" {
+		t.Errorf("PublicKey: got %q", v.PublicKey)
+	}
+	if v.SNI != "" || v.ShortID != "" {
+		t.Errorf("SNI/ShortID should be empty, got SNI=%q ShortID=%q", v.SNI, v.ShortID)
 	}
 }
