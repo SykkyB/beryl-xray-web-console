@@ -206,73 +206,72 @@
     var ICON_CSS_ID = "xray-vpn-icon-style";
     var ICON_ACTIVE_CLASS = "xray-vpn-active";
     var ICON_POLL_MS = 5000;
+    // gl-blue-500 from GL.iNet's palette — distinct from the native
+    // teal (#02b6d2) that lights up when their stock WG/OVPN clients
+    // are connected, so it's obvious which indicator is talking.
+    var ACTIVE_COLOR = "#5272f7";
 
     function injectIconCSS() {
         if (document.getElementById(ICON_CSS_ID)) return;
         var style = document.createElement("style");
         style.id = ICON_CSS_ID;
-        // GL.iNet teal — same swatch used in their dashboard and in
-        // the panel's own dark theme.
+        // The topology icon may be a font glyph (color), an inline
+        // SVG (fill / stroke), or a CSS-mask image (background-color
+        // on the mask). Cover all four; harmless on the ones that
+        // don't apply.
+        var c = ACTIVE_COLOR;
         style.textContent =
-            "." + ICON_ACTIVE_CLASS + " i.icon-vpn," +
-            "." + ICON_ACTIVE_CLASS + " .icon-vpn { color: #02b6d2 !important; }" +
             "." + ICON_ACTIVE_CLASS + ", " +
-            "." + ICON_ACTIVE_CLASS + " span, " +
-            "." + ICON_ACTIVE_CLASS + " div { color: #02b6d2 !important; }";
+            "." + ICON_ACTIVE_CLASS + " * { " +
+                "color: " + c + " !important; " +
+                "fill: " + c + " !important; " +
+                "stroke: " + c + " !important; " +
+            "} " +
+            "." + ICON_ACTIVE_CLASS + " svg path, " +
+            "." + ICON_ACTIVE_CLASS + " svg circle, " +
+            "." + ICON_ACTIVE_CLASS + " svg rect { " +
+                "fill: " + c + " !important; " +
+                "stroke: " + c + " !important; " +
+            "}";
         document.head.appendChild(style);
     }
 
-    // Find the home-page TOPOLOGY VPN service-icon — the one in the
-    // center row "AdGuard | IPv6 | VPN | Tor", NOT the VPN entry in
-    // the left sidebar. Both use the same .icon-vpn font-icon, so
-    // disambiguating by class alone doesn't work.
+    // Find the home-page TOPOLOGY VPN service-cell. Confirmed DOM
+    // structure (GL.iNet 4.8.1):
     //
-    // Heuristic: among all .icon-vpn elements, pick the one whose
-    // grandparent (the row container) also contains at least one of
-    // .icon-adguard / .icon-ipv6 / .icon-tor as a sibling-tree icon.
-    // That combination only appears in the topology row; the sidebar
-    // has none of those siblings near the VPN entry.
+    //   <div class="router-visual-wrapper">
+    //     <div class="router-info">
+    //       <ul class="app-list">
+    //         <li> <span class="iconfont icon-adguard"></span> AdGuard </li>
+    //         <li> <span class="iconfont icon-ipv6"></span> IPv6 </li>
+    //         <li> <span class="iconfont icon-vpn1"></span> VPN </li>
+    //         <li> <span class="iconfont icon-tor"></span> Tor </li>
     //
-    // Returns the small container that wraps the icon-vpn glyph plus
-    // its "VPN" label — that's the smallest unit our CSS class can
-    // safely color without bleeding into neighbours.
+    // Pin to ul.app-list under .router-visual-wrapper / .router-info
+    // to avoid picking up the sidebar VPN entry (which uses .icon-vpn
+    // and lives in a different ul). Walk-up heuristics from earlier
+    // versions hit a common ancestor and accidentally returned the
+    // sidebar — this version uses no heuristics, just structure.
     function findVPNServiceCell() {
-        var TOPO_SIBLING_CLASSES = [".icon-adguard", ".icon-ipv6", ".icon-tor"];
-        var glyphs = document.querySelectorAll("i.icon-vpn, .icon-vpn");
-        for (var i = 0; i < glyphs.length; i++) {
-            var icon = glyphs[i];
-            // Walk up 1..5 ancestors looking for a row container that
-            // holds sibling service icons — proof we're in topology.
-            var ancestor = icon;
-            var foundRow = null;
-            for (var d = 0; d < 5 && ancestor; d++) {
-                var hasSibling = false;
-                for (var s = 0; s < TOPO_SIBLING_CLASSES.length; s++) {
-                    if (ancestor.querySelector(TOPO_SIBLING_CLASSES[s])) {
-                        hasSibling = true;
-                        break;
-                    }
-                }
-                if (hasSibling) {
-                    foundRow = ancestor;
-                    break;
-                }
-                ancestor = ancestor.parentElement;
-            }
-            if (!foundRow) continue;
+        var rows = document.querySelectorAll(
+            ".router-visual-wrapper ul.app-list, " +
+            ".router-info ul.app-list, " +
+            "ul.app-list"
+        );
+        for (var r = 0; r < rows.length; r++) {
+            var row = rows[r];
+            // Sanity: the matched <ul> must look like the service
+            // row — at least one sibling label confirms it. Cheap
+            // guard against future SPA refactors that reuse the
+            // class for unrelated lists.
+            if (!/AdGuard|IPv6|Tor/.test(row.textContent || "")) continue;
 
-            // We're in topology. Now find the smallest sub-container
-            // *within* the row that holds this icon-vpn AND its "VPN"
-            // label, so we don't paint the whole row.
-            var node = icon;
-            for (var d2 = 0; d2 < 5 && node && node !== foundRow; d2++) {
-                var t = (node.textContent || "").trim();
-                if (/^vpn$/i.test(t)) return node;
-                node = node.parentElement;
+            var items = row.querySelectorAll("li");
+            for (var i = 0; i < items.length; i++) {
+                if (/^vpn$/i.test((items[i].textContent || "").trim())) {
+                    return items[i];
+                }
             }
-            // Fallback: the icon's immediate parent (label sits in a
-            // sibling element we couldn't isolate cleanly).
-            return icon.parentElement || icon;
         }
         return null;
     }
@@ -302,10 +301,37 @@
 
     function applyVPNIconState(active) {
         var cell = findVPNServiceCell();
-        if (!cell) return;
+
+        // Stale-cleanup sweep: earlier launcher versions painted the
+        // sidebar VPN entry by mistake. Strip the active class from
+        // anything that isn't our chosen topology cell so users
+        // don't have to reload to clear leftovers.
+        var stale = document.querySelectorAll("." + ICON_ACTIVE_CLASS);
+        for (var s = 0; s < stale.length; s++) {
+            if (stale[s] !== cell) stale[s].classList.remove(ICON_ACTIVE_CLASS);
+        }
+
+        // Debug hook — `xrayLauncher` is queryable from DevTools.
+        try {
+            window.xrayLauncher = window.xrayLauncher || {};
+            window.xrayLauncher.lastCell = cell;
+            window.xrayLauncher.lastActive = active;
+            window.xrayLauncher.lastTickAt = new Date().toISOString();
+        } catch (e) {}
+
+        if (!cell) {
+            try { console.warn("[xray-panel] VPN topology icon NOT FOUND in DOM"); } catch (e) {}
+            return;
+        }
         var has = cell.classList.contains(ICON_ACTIVE_CLASS);
-        if (active && !has) cell.classList.add(ICON_ACTIVE_CLASS);
-        if (!active && has) cell.classList.remove(ICON_ACTIVE_CLASS);
+        if (active && !has) {
+            cell.classList.add(ICON_ACTIVE_CLASS);
+            try { console.log("[xray-panel] VPN icon → ACTIVE", cell); } catch (e) {}
+        }
+        if (!active && has) {
+            cell.classList.remove(ICON_ACTIVE_CLASS);
+            try { console.log("[xray-panel] VPN icon → inactive", cell); } catch (e) {}
+        }
     }
 
     function tickVPNIcon() {
