@@ -34,7 +34,7 @@ type liveRefreshSlot struct {
 	payload liveResponse
 }
 
-const liveCacheTTL = 1500 * time.Millisecond
+const liveCacheTTL = 3 * time.Second
 
 // liveResponse is the shape the UI consumes.
 type liveResponse struct {

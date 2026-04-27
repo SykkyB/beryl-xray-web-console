@@ -11,6 +11,7 @@ import (
 	"beryl-xray-web-console/internal/clash"
 	"beryl-xray-web-console/internal/config"
 	"beryl-xray-web-console/internal/exitip"
+	"beryl-xray-web-console/internal/logs"
 	"beryl-xray-web-console/internal/service"
 	"beryl-xray-web-console/internal/singbox"
 	"beryl-xray-web-console/internal/store"
@@ -30,6 +31,7 @@ type Server struct {
 	Renderer *singbox.Renderer
 	Clash    *clash.Client
 	ExitIP   *exitip.Poller
+	LogHub   *logs.Hub
 
 	// stateCache is a single-flight cache around handleState; liveCache
 	// does the same for handleLive. Both initialised by NewServer so
@@ -63,6 +65,7 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("POST /api/profiles/{id}/activate", s.handleProfileActivate)
 	mux.HandleFunc("GET /api/live", s.handleLive)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
+	mux.HandleFunc("GET /api/logs/stream", s.handleLogsStream)
 	registerUIRoutes(mux)
 	return BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
 }

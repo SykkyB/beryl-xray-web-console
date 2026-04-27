@@ -28,10 +28,11 @@ type block struct {
 }
 
 // stateCacheTTL bounds how long a /api/state response may be reused
-// across concurrent pollers. Tuned to dedupe 2-3 browser tabs each on a
-// 5s interval without ever showing data older than ~1.5s. Single in-
-// flight refresh is enforced by stateRefresh — see below.
-const stateCacheTTL = 1500 * time.Millisecond
+// across concurrent pollers. The probe cost is dominated by sourcing
+// gl_util.sh in a busybox subshell (~50ms) plus a handful of pgrep/
+// uci forks. With multiple browser tabs each polling every 10s we
+// want at most ~1 actual probe set every 3s.
+const stateCacheTTL = 3 * time.Second
 
 // stateCache + stateRefresh form a tiny single-flight cache. Multiple
 // concurrent /api/state requests:

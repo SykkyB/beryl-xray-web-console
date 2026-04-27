@@ -299,20 +299,67 @@
         }
     }
 
-    async function fetchLogs() {
+    // ── log streaming via Server-Sent Events ───────────────────────────
+    //
+    // We replaced the 3-second polling with an EventSource that pushes
+    // each new line as soon as sing-box writes it. Auto-reconnect is
+    // built into the browser API; we just decide whether to render
+    // lines as they arrive.
+
+    const LOG_BUFFER_LINES = 1000;   // hard cap so DOM doesn't grow forever
+    let logEventSource = null;
+    let logBuffer = [];
+
+    function logViewIsAtBottom() {
         const view = $("#log-view");
-        const wasAtBottom = (view.scrollHeight - view.scrollTop - view.clientHeight) < 8;
-        try {
-            const r = await fetch("/api/logs?lines=200", { credentials: "same-origin" });
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            const data = await r.json();
-            view.textContent = (data.lines || []).join("\n") || "(empty)";
-            const autoScroll = $("#log-autoscroll").checked;
-            if (autoScroll && wasAtBottom) {
-                view.scrollTop = view.scrollHeight;
+        return (view.scrollHeight - view.scrollTop - view.clientHeight) < 8;
+    }
+
+    function renderLogBuffer(forceScroll) {
+        const view = $("#log-view");
+        view.textContent = logBuffer.length ? logBuffer.join("\n") : "(empty)";
+        const autoScroll = $("#log-autoscroll").checked;
+        if (autoScroll && (forceScroll || logViewIsAtBottom())) {
+            view.scrollTop = view.scrollHeight;
+        }
+    }
+
+    function appendLogLine(line) {
+        const wasAtBottom = logViewIsAtBottom();
+        logBuffer.push(line);
+        if (logBuffer.length > LOG_BUFFER_LINES) {
+            logBuffer = logBuffer.slice(logBuffer.length - LOG_BUFFER_LINES);
+        }
+        renderLogBuffer(wasAtBottom);
+    }
+
+    function startLogStream() {
+        stopLogStream();
+        logBuffer = [];
+        $("#log-view").textContent = "Connecting…";
+
+        // EventSource carries the browser's cached basic-auth header
+        // automatically for same-origin requests.
+        const es = new EventSource("/api/logs/stream?backfill=200");
+
+        es.onmessage = (e) => {
+            appendLogLine(e.data);
+        };
+        es.onerror = () => {
+            // Browser will auto-retry. Keep what's already shown so
+            // the user sees the stream "freeze" instead of going blank.
+            // If we never connected at all, show a small notice.
+            if (logBuffer.length === 0) {
+                $("#log-view").textContent = "Log stream disconnected — retrying…";
             }
-        } catch (err) {
-            view.textContent = "Failed to load logs: " + err.message;
+        };
+        logEventSource = es;
+    }
+
+    function stopLogStream() {
+        if (logEventSource) {
+            logEventSource.close();
+            logEventSource = null;
         }
     }
 
@@ -326,7 +373,9 @@
             fetchState();
             fetchProfiles();
             fetchLive();
-            fetchLogs();
+            // Logs are live-streamed, but a manual refresh re-opens
+            // the stream which clears any disconnect notice.
+            startLogStream();
         });
         $("#vless-import").addEventListener("click", importVless);
 
@@ -339,19 +388,28 @@
         fetchState();
         fetchProfiles();
         fetchLive();
-        fetchLogs();
+        startLogStream();
 
-        setInterval(fetchState,    5000);
-        setInterval(fetchProfiles, 15000);
-        setInterval(fetchLive,     2000);
+        // Poll cadence picks: state changes via user actions are
+        // applied via fetchState() right after the action call, so
+        // background polling can be lazy. Live traffic numbers tick
+        // ~every 5s, that's plenty for "is the tunnel busy?".
+        setInterval(fetchState,    10000);
+        setInterval(fetchProfiles, 30000);
+        setInterval(fetchLive,     5000);
 
-        // Logs auto-refresh: every 3s when checkbox is ticked.
-        let logTimer = setInterval(fetchLogs, 3000);
+        // Log stream toggle — checkbox now means "live stream on/off".
         $("#log-autorefresh").addEventListener("change", (e) => {
-            clearInterval(logTimer);
-            if (e.target.checked) {
-                logTimer = setInterval(fetchLogs, 3000);
-                fetchLogs();
+            if (e.target.checked) startLogStream();
+            else stopLogStream();
+        });
+
+        // Pause stream when tab is hidden to avoid accumulating data.
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                stopLogStream();
+            } else if ($("#log-autorefresh").checked) {
+                startLogStream();
             }
         });
     });

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	nethttp "net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 	"beryl-xray-web-console/internal/config"
 	"beryl-xray-web-console/internal/exitip"
 	panelhttp "beryl-xray-web-console/internal/http"
+	"beryl-xray-web-console/internal/logs"
 	"beryl-xray-web-console/internal/service"
 	"beryl-xray-web-console/internal/singbox"
 	"beryl-xray-web-console/internal/store"
@@ -68,6 +70,7 @@ func main() {
 		},
 		Clash:  &clash.Client{BaseURL: "http://" + cfg.ClashAPI, Timeout: 5 * time.Second},
 		ExitIP: exitIP,
+		LogHub: logs.NewHub(cfg.SingBoxLog),
 	})
 
 	// Force tcp4: Go's default "tcp" opens an AF_INET6 dual-stack
@@ -88,6 +91,12 @@ func main() {
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()
 	exitIP.Start(rootCtx)
+
+	// pprof on loopback only — for diagnostics, not user-facing.
+	go func() {
+		log.Printf("pprof listening on 127.0.0.1:9093")
+		_ = nethttp.ListenAndServe("127.0.0.1:9093", nil)
+	}()
 
 	go func() {
 		log.Printf("xray-panel-cli listening on %s (tcp4)", cfg.Listen)
