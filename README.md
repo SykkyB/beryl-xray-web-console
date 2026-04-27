@@ -150,6 +150,8 @@ beryl-xray-web-console/
 │   ├── xray-panel-cli.init                 # procd init для панели
 │   └── install.sh                          # cross-compile + scp + перезапуск
 │
+├── cmd/vless-vet/main.go                   # утилита: фильтр + сетевая проверка vless:// URL
+│
 └── scripts/
     ├── build-sing-box.sh                   # кросс-компиляция sing-box (musl-friendly)
     └── install.sh                          # деплой sing-box (без панели)
@@ -460,6 +462,151 @@ curl -s http://127.0.0.1:9090/connections | head -c 800
 
 # UCI-состояние
 uci show sing-box
+```
+
+---
+
+## Утилита `vless-vet` — массовая проверка списка `vless://` URL
+
+Когда натыкаешься на список из десятков-сотен публичных VLESS-конфигов
+(репозитории на GitHub, телеграм-каналы и т. п.) — пропускаешь его через
+`vless-vet`, чтобы:
+
+1. отбросить URL, которые панель в принципе не сможет импортировать
+   (неподдерживаемые transport / security, битый формат, и т. п.);
+2. для оставшихся — проверить достижимость хоста (TCP connect → TLS
+   handshake с правильным SNI);
+3. **сгруппировать живые URL по комбинации `transport+security`**
+   (`tcp+reality`, `tcp+tls`, `ws+tls`, …) — каждая группа в отдельной
+   секции выходного файла, в порядке предпочтения. Так удобно сначала
+   попробовать канонический `tcp+reality`, а потом по убыванию.
+
+### Запуск
+
+```sh
+# базовый прогон: на вход — файл с одним vless:// на строку (комменты #
+# допустимы). Результат — рядом, с ".alive" в имени.
+go run ./cmd/vless-vet -in samples/raw.txt
+# → samples/raw.alive.txt
+
+# свой выходной путь
+go run ./cmd/vless-vet -in samples/raw.txt -out /tmp/alive.txt
+
+# больше параллельных проверок и более строгие таймауты
+go run ./cmd/vless-vet -in samples/raw.txt -workers 128 \
+    -tcp-timeout 2s -tls-timeout 3s
+
+# только TCP-достижимость (без TLS-хендшейка) — быстрее, но слабее сигнал
+go run ./cmd/vless-vet -in samples/raw.txt -skip-tls
+```
+
+### Фильтр по группам (`-only`)
+
+Через запятую перечисляешь, какие бакеты записать в выходной файл.
+Парсятся всегда все, проверяются по сети тоже все (чтобы статистика
+в шапке отчёта была честной), но в файл попадают только нужные:
+
+```sh
+# только канонический бакет
+go run ./cmd/vless-vet -in samples/raw.txt -only tcp+reality
+
+# WebSocket+TLS и TCP+TLS
+go run ./cmd/vless-vet -in samples/raw.txt -only "ws+tls,tcp+tls"
+
+# любая security на TCP
+go run ./cmd/vless-vet -in samples/raw.txt -only "tcp+*"
+
+# Reality на любом транспорте
+go run ./cmd/vless-vet -in samples/raw.txt -only "*+reality"
+```
+
+В консоли в конце прогона — breakdown живых URL по бакетам. Бакеты,
+отброшенные `-only`, помечены `-` (они есть в живых, но в файл не
+попадут):
+
+```
+DONE in 18s — kept 14/47 (tcp_ok=29 tls_ok=22) → samples/raw.alive.txt
+    tcp+reality    11
+  - tcp+tls         5
+    ws+tls          3
+```
+
+В самом выходном файле каждая секция предварена заголовком — копируй
+нужный кусок целиком:
+
+```
+# ── tcp+reality (11) ──
+vless://...
+vless://...
+
+# ── ws+tls (3) ──
+vless://...
+```
+
+> Прохождение TLS-хендшейка — сильный сигнал «хост жив и сконфигурирован
+> под заявленную TLS/Reality-схему», но не гарантия успешной VLESS-сессии
+> (особенно для Reality, где `tls_ok` означает «сервер ответил
+> прикрытым cert'ом», а реальный VLESS-handshake идёт уже после).
+> Чтобы отсеять и такие битые линки — используй `-deep` (см. ниже).
+
+### Deep-проверка через локальный sing-box (`-deep`)
+
+`tls_ok` мимикрирует под жизнь профиля — но ловит только «сервер
+вообще отвечает». Классическое расхождение: TLS handshake проходит
+(Reality честно отдаёт cert прикрытого сайта), а внутренняя VLESS-сессия
+ломается из-за устаревших `uuid` / `pbk` / `sid`. На UI это
+отображается как «тоннель UP, exit IP — закешированный, страницы не
+открываются» — именно тот сценарий, который мы поймали в первой
+итерации тестирования.
+
+`-deep` поднимает на каждый TLS-passer **одноразовый локальный
+sing-box** с минимальным конфигом: `socks-in` на эфемерном порту →
+один VLESS-outbound (тестируемый профиль), затем делает HTTP/1.0 GET
+на `http://www.gstatic.com/generate_204` через этот SOCKS. Если в
+ответ прилетел 204 — пост-handshake VLESS реально несёт трафик,
+профиль зачётный. Иначе — нет. В выходной файл при `-deep` попадают
+**только** профили, прошедшие эту проверку.
+
+```sh
+# на macOS (нужен sing-box локально, поставь brew install sing-box):
+go run ./cmd/vless-vet -in samples/raw.txt -deep
+
+# с явным путём к бинарнику:
+go run ./cmd/vless-vet -in samples/raw.txt -deep -singbox /opt/homebrew/bin/sing-box
+
+# тюнинг concurrency и таймаута на профиль:
+go run ./cmd/vless-vet -in samples/raw.txt -deep -deep-workers 8 -deep-timeout 12s
+
+# на самом роутере (sing-box уже там), куда удобно скармливать большие списки:
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/vless-vet ./cmd/vless-vet
+scp -O /tmp/vless-vet beryl:/tmp/   # busybox dropbear требует -O
+ssh beryl '/tmp/vless-vet -in /tmp/raw.txt -deep -singbox /usr/bin/sing-box -deep-workers 4'
+```
+
+`-deep` несовместим с `-skip-tls` (deep сам опирается на TLS как
+дешёвый предфильтр; если TLS не прошёл — VLESS-сессия гарантированно
+не пройдёт, тестировать смысла нет).
+
+Каждая deep-проверка — это запуск процесса sing-box, поэтому она
+**медленнее** TCP/TLS-стадии: 2–10 секунд на профиль. Поэтому
+`-deep-workers` по умолчанию 4 (а не 64, как у TCP-стадии). Для
+списка из ~30 профилей с дефолтами — около минуты.
+
+В шапке выходного файла при `-deep` появляется новая строка:
+
+```
+# Probe stage
+#   TCP connect succeeded : 30 / 30
+#   TLS handshake succeeded : 28 / 30
+#   VLESS session OK : 11 / 30  (HTTP/204 fetched through sing-box+SOCKS)
+#   kept in this file : entries that passed VLESS session (deep)
+```
+
+И итог в консоли:
+```
+DONE in 47s — kept 11/30 (tcp_ok=30 tls_ok=28 vless_ok=11) → samples/raw.alive.txt
+    tcp+reality    8
+    ws+tls         3
 ```
 
 ---
