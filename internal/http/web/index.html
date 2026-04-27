@@ -25,7 +25,7 @@
     </header>
 
     <main>
-        <!-- Sing-box service -->
+        <!-- Sing-box service (incl. physical-switch bind) -->
         <section class="card" data-card="service">
             <div class="card-head">
                 <h2>Sing-box</h2>
@@ -43,19 +43,31 @@
                         <span data-key="enabled" class="pill pill-muted">…</span>
                     </span>
                     <span class="status-item">
+                        <span class="status-label">Side switch</span>
+                        <span data-key="physical_switch" class="pill pill-muted">…</span>
+                    </span>
+                    <span class="status-item">
                         <span class="status-label">Active profile</span>
                         <span data-key="active_profile" class="pill pill-muted">…</span>
                     </span>
                 </div>
             </div>
             <div class="card-body">
-                <div class="action-row">
+                <div class="action-row" data-row="manual">
                     <button class="btn-action" data-action="start">Start</button>
                     <button class="btn-action" data-action="stop">Stop</button>
                     <button class="btn-action" data-action="restart">Restart</button>
                     <button class="btn-action" data-action="reload">Reload</button>
                 </div>
-                <p class="hint">Start, stop, or hot-reload the sing-box VPN client. <em>Reload</em> validates the config and re-applies it without losing the tunnel for long.</p>
+                <p class="hint" data-hint="manual">Start, stop, or hot-reload the sing-box VPN client. <em>Reload</em> validates the config and re-applies it without losing the tunnel for long.</p>
+
+                <div class="bind-row">
+                    <label class="bind-toggle-label">
+                        <span>Auto-follow physical switch</span>
+                        <button class="btn-toggle" data-toggle="bind_switch" data-state="off">…</button>
+                    </label>
+                    <p class="hint" data-hint="bind">When on, sing-box follows the GL.iNet hardware mode switch on the side of the router (ON = start, OFF = stop), and the manual buttons above are gated on the switch position. Acts like the native WG / OVPN binding.</p>
+                </div>
             </div>
         </section>
 
@@ -106,29 +118,6 @@
                     <button class="btn-toggle" data-toggle="killswitch" data-state="off">…</button>
                 </div>
                 <p class="hint">When the tunnel goes down, LAN traffic is blackholed instead of falling back to the direct WAN. Off by default — same behavior as GL.iNet's stock WG / OVPN clients.</p>
-            </div>
-        </section>
-
-        <!-- Bind switch + physical state -->
-        <section class="card" data-card="bind">
-            <div class="card-head">
-                <h2>Physical switch</h2>
-                <div class="status-row">
-                    <span class="status-item">
-                        <span class="status-label">Side switch</span>
-                        <span data-key="physical_switch" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">Bind</span>
-                        <span data-key="bind_switch" class="pill pill-muted">…</span>
-                    </span>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="action-row">
-                    <button class="btn-toggle" data-toggle="bind_switch" data-state="off">…</button>
-                </div>
-                <p class="hint">When bind is on, sing-box follows the GL.iNet hardware mode switch on the side of the router (ON = start, OFF = stop). Acts like the native WG / OVPN binding.</p>
             </div>
         </section>
 

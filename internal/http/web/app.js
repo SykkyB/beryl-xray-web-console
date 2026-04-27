@@ -48,6 +48,36 @@
         btn.textContent = on ? "ON" : "OFF";
     }
 
+    // updateServiceGating disables Start/Restart/Reload when bind_switch
+    // is ON and the physical switch is OFF, since the backend will
+    // refuse those actions with 409 anyway. Stop is never gated. The
+    // bind hint swaps to a state-aware version explaining what's
+    // blocking the buttons.
+    function updateServiceGating(bindOn, physState) {
+        const blocked = bindOn && physState === "off";
+        const gated = ["start", "restart", "reload"];
+        for (const act of gated) {
+            const b = document.querySelector(`button[data-action="${act}"]`);
+            if (!b) continue;
+            b.disabled = blocked;
+            b.title = blocked
+                ? "Disabled: bind_switch is ON and the side switch is OFF — flip it ON, or turn off auto-follow"
+                : "";
+        }
+        const hint = document.querySelector('[data-hint="bind"]');
+        if (hint) {
+            if (bindOn) {
+                hint.textContent = physState === "on"
+                    ? "Auto-follow is ON, side switch is ON — sing-box runs while the switch stays ON. Flip it OFF to stop the tunnel without touching the panel."
+                    : physState === "off"
+                    ? "Auto-follow is ON, side switch is OFF — sing-box stays stopped. Manual Start/Restart/Reload are blocked; flip the switch ON, or turn off auto-follow first."
+                    : "Auto-follow is ON. The hardware switch position couldn't be read — falling back to manual mode.";
+            } else {
+                hint.textContent = "When on, sing-box follows the GL.iNet hardware mode switch on the side of the router (ON = start, OFF = stop), and the manual buttons above are gated on the switch position. Acts like the native WG / OVPN binding.";
+            }
+        }
+    }
+
     function pad2(n) { return String(n).padStart(2, "0"); }
 
     function formatTime(iso) {
@@ -81,13 +111,22 @@
                 v === "on"  ? { cls: "pill-ok",    text: "ON" } :
                 v === "off" ? { cls: "pill-muted", text: "OFF" } :
                               { cls: "pill-warn",  text: v || "unknown" });
-            renderBlock(cell("bind_switch"), s.bind_switch, (v) =>
-                v ? { cls: "pill-ok", text: "ON" } : { cls: "pill-muted", text: "OFF" });
 
             $("#generated-at").textContent = "Updated: " + formatTime(s.generated_at);
 
             if (s.killswitch && s.killswitch.ok) setToggleVisual("killswitch", !!s.killswitch.value);
             if (s.bind_switch && s.bind_switch.ok) setToggleVisual("bind_switch", !!s.bind_switch.value);
+
+            // Gate Start/Restart/Reload when bind=ON and the physical
+            // switch is OFF — the panel's POST /api/service would
+            // return 409 anyway (matching the init script's refusal),
+            // and showing buttons disabled rather than letting the
+            // user click into an error is friendlier. Stop is never
+            // gated. The hint underneath the action row swaps to a
+            // bind-aware version so the reason is obvious.
+            const bindOn = !!(s.bind_switch && s.bind_switch.ok && s.bind_switch.value);
+            const phys   = s.physical_switch && s.physical_switch.ok ? s.physical_switch.value : null;
+            updateServiceGating(bindOn, phys);
         } catch (err) {
             setActionResult("Failed to load /api/state: " + err.message, false);
         }
