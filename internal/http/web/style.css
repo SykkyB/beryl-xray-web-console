@@ -274,6 +274,12 @@ main {
 
 /* ── profiles list ───────────────────────────────────────────────────── */
 
+.profile-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
 .profile-list {
     list-style: none;
     margin: 0;

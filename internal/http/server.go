@@ -64,6 +64,7 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("PATCH /api/profiles/{id}", s.handleProfilePatch)
 	mux.HandleFunc("DELETE /api/profiles/{id}", s.handleProfileDelete)
 	mux.HandleFunc("POST /api/profiles/{id}/activate", s.handleProfileActivate)
+	mux.HandleFunc("GET /api/profiles/{id}/delay", s.handleProfileDelay)
 	mux.HandleFunc("GET /api/live", s.handleLive)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/logs/stream", s.handleLogsStream)

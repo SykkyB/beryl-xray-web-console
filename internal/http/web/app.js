@@ -166,19 +166,23 @@
                 return;
             }
 
-            list.innerHTML = profiles.map((p) => `
+            list.innerHTML = profiles.map((p) => {
+                const cached = latencyCache[p.id];
+                const pingPill = cached ? renderPingPill(cached) : "";
+                return `
                 <li class="profile-row${p.active ? " is-active" : ""}" data-id="${escapeHTML(p.id)}">
                     <div class="profile-info">
-                        <div class="profile-name">${escapeHTML(p.name)}${p.active ? ` <span class="pill pill-ok">ACTIVE</span>` : ""}</div>
+                        <div class="profile-name">${escapeHTML(p.name)}${p.active ? ` <span class="pill pill-ok">ACTIVE</span>` : ""} ${pingPill}</div>
                         <div class="profile-meta">${escapeHTML(p.server)}:${p.port} · uuid ${escapeHTML(p.uuid_mask)}${p.flow ? " · flow " + escapeHTML(p.flow) : ""}</div>
                     </div>
                     <div class="profile-actions">
                         ${p.active ? "" : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`}
+                        <button class="btn-action" data-act="test" data-id="${escapeHTML(p.id)}">Test</button>
                         <button class="btn-action" data-act="edit" data-id="${escapeHTML(p.id)}">Edit</button>
                         ${p.active ? "" : `<button class="btn-action btn-danger"  data-act="delete"   data-id="${escapeHTML(p.id)}">Delete</button>`}
                     </div>
                 </li>
-            `).join("");
+            `}).join("");
         } catch (err) {
             list.innerHTML = `<li class="profile-empty muted">Failed to load profiles: ${escapeHTML(err.message)}</li>`;
         }
@@ -207,12 +211,85 @@
         });
     }
 
+    // ── latency test ───────────────────────────────────────────────────
+    //
+    // We cache the last result per profile so reopening the panel
+    // doesn't blank out previous timings. Cleared on full page reload.
+    const latencyCache = {};   // id → { ok, delayMs, error, at }
+
+    function renderPingPill(r) {
+        if (r.ok) {
+            const cls = r.delayMs < 200 ? "pill-ok" :
+                        r.delayMs < 500 ? "pill-warn" : "pill-bad";
+            return `<span class="pill ${cls}">${r.delayMs} ms</span>`;
+        }
+        // Pick a short label that matches the actual failure mode so
+        // the pill itself is informative, not just a tooltip.
+        const err = (r.error || "").toLowerCase();
+        let label = "error";
+        if (err.includes("not running"))      label = "stopped";
+        else if (err.includes("timeout"))     label = "timeout";
+        else if (err.includes("refused"))     label = "refused";
+        else if (err.includes("no such"))     label = "missing";
+        return `<span class="pill pill-bad" title="${escapeHTML(r.error || "")}">${label}</span>`;
+    }
+
+    async function testProfile(id) {
+        try {
+            const r = await fetch("/api/profiles/" + encodeURIComponent(id) + "/delay", {
+                credentials: "same-origin",
+            });
+            if (!r.ok) {
+                const j = await r.json().catch(() => ({}));
+                throw new Error(j.error || ("HTTP " + r.status));
+            }
+            const data = await r.json();
+            latencyCache[id] = data.ok
+                ? { ok: true,  delayMs: data.delay_ms, at: Date.now() }
+                : { ok: false, error: data.error || "failed", at: Date.now() };
+        } catch (err) {
+            latencyCache[id] = { ok: false, error: err.message, at: Date.now() };
+        }
+        await fetchProfiles();
+    }
+
+    async function testAllProfiles() {
+        const btn = $("#test-all");
+        await setBusy(btn, async () => {
+            try {
+                const r = await fetch("/api/profiles", { credentials: "same-origin" });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const data = await r.json();
+                const profiles = data.profiles || [];
+                if (profiles.length === 0) {
+                    setActionResult("No profiles to test", false);
+                    return;
+                }
+                setActionResult(`Testing ${profiles.length} profile(s)…`, true);
+                // Sequential: clash-API does the proxy probe; serial
+                // avoids overlapping probes through the same upstream.
+                for (const p of profiles) {
+                    await testProfile(p.id);
+                }
+                setActionResult("Latency test complete", true);
+            } catch (err) {
+                setActionResult("Test all failed: " + err.message, false);
+            }
+        });
+    }
+
     async function profileAction(btn) {
         const id = btn.dataset.id;
         const act = btn.dataset.act;
         if (!id || !act) return;
         if (act === "edit") {
             await openProfileEditor(id, btn);
+            return;
+        }
+        if (act === "test") {
+            await setBusy(btn, async () => {
+                await testProfile(id);
+            });
             return;
         }
         await setBusy(btn, async () => {
@@ -475,6 +552,7 @@
             startLogStream();
         });
         $("#vless-import").addEventListener("click", importVless);
+        $("#test-all").addEventListener("click", testAllProfiles);
 
         // Profile row buttons are added dynamically — delegate.
         $("#profile-list").addEventListener("click", (e) => {

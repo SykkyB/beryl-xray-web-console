@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	nethttp "net/http"
+	"strconv"
 	"time"
 
 	"beryl-xray-web-console/internal/service"
@@ -311,6 +312,78 @@ func (s *Server) handleProfileDelete(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true, "id": id})
+}
+
+// handleProfileDelay measures latency through a specific profile by
+// asking sing-box's clash-API to time an HTTP request via that
+// outbound. Defaults: gstatic 204 endpoint, 5s timeout. Sing-box
+// must be running and the outbound must be in its current config —
+// since our render always includes every saved profile, that's
+// always true after at least one activation has happened.
+func (s *Server) handleProfileDelay(w nethttp.ResponseWriter, r *nethttp.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, nethttp.StatusBadRequest, fmt.Errorf("missing id"))
+		return
+	}
+	prof, err := s.Profiles.Get(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, nethttp.StatusNotFound, err)
+			return
+		}
+		writeErr(w, nethttp.StatusInternalServerError, err)
+		return
+	}
+	if s.Clash == nil {
+		writeErr(w, nethttp.StatusServiceUnavailable, fmt.Errorf("clash-API client not configured"))
+		return
+	}
+
+	// Latency tests run *through* sing-box's clash-API — if sing-box
+	// isn't running, return a specific error instead of a useless
+	// 5-second timeout.
+	if running, _ := s.Probe.SingBoxRunning(r.Context()); !running {
+		writeJSON(w, nethttp.StatusOK, map[string]any{
+			"id":    id,
+			"ok":    false,
+			"error": "sing-box is not running — start the service first",
+		})
+		return
+	}
+
+	testURL := r.URL.Query().Get("url")
+	if testURL == "" {
+		testURL = "https://www.gstatic.com/generate_204"
+	}
+	timeoutMs := 5000
+	if v := r.URL.Query().Get("timeout"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil && n > 0 && n <= 30000 {
+			timeoutMs = n
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(),
+		time.Duration(timeoutMs+2000)*time.Millisecond)
+	defer cancel()
+
+	tag := singbox.TagOf(prof)
+	delay, err := s.Clash.ProxyDelay(ctx, tag, testURL, timeoutMs)
+	if err != nil {
+		writeJSON(w, nethttp.StatusOK, map[string]any{
+			"id":    id,
+			"tag":   tag,
+			"ok":    false,
+			"error": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"id":       id,
+		"tag":      tag,
+		"ok":       true,
+		"delay_ms": delay,
+	})
 }
 
 func (s *Server) handleProfileActivate(w nethttp.ResponseWriter, r *nethttp.Request) {

@@ -131,6 +131,56 @@ func (c *Client) GetProxy(ctx context.Context, name string) (*Proxy, error) {
 	return &p, nil
 }
 
+// DelayResp is the response shape of GET /proxies/<name>/delay.
+// On success Delay is the round-trip latency in ms; on timeout or
+// upstream failure Message describes the error.
+type DelayResp struct {
+	Delay   int    `json:"delay"`
+	Message string `json:"message,omitempty"`
+}
+
+// ProxyDelay asks clash-API to send an HTTP HEAD/GET to testURL via
+// the given outbound and report the round-trip time. timeoutMs is the
+// upper bound — clash will return early with an error message if it
+// expires.
+func (c *Client) ProxyDelay(ctx context.Context, name, testURL string, timeoutMs int) (int, error) {
+	path := fmt.Sprintf("/proxies/%s/delay?url=%s&timeout=%d",
+		name, urlQueryEscape(testURL), timeoutMs)
+	var d DelayResp
+	if err := c.get(ctx, path, &d); err != nil {
+		return 0, err
+	}
+	if d.Message != "" {
+		return d.Delay, fmt.Errorf("%s", d.Message)
+	}
+	return d.Delay, nil
+}
+
+// urlQueryEscape is a minimal URL-encoder for the URL-as-query-param
+// case. Avoids pulling in net/url just for this.
+func urlQueryEscape(s string) string {
+	const safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		ok := false
+		for j := 0; j < len(safe); j++ {
+			if c == safe[j] {
+				ok = true
+				break
+			}
+		}
+		if ok {
+			out = append(out, c)
+		} else {
+			out = append(out, '%',
+				"0123456789ABCDEF"[c>>4],
+				"0123456789ABCDEF"[c&0xF])
+		}
+	}
+	return string(out)
+}
+
 // SelectProxy switches the named selector outbound to the given target.
 // Returns an error if the selector or target doesn't exist, or if the
 // outbound at `selector` isn't actually a selector type. Used after
