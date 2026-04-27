@@ -43,6 +43,7 @@ scp $SSH_OPTS $SCP_OPTS \
 	"$REPO_ROOT/deploy/panel.example.yaml" \
 	"$REPO_ROOT/router/etc/init.d/sing-box" \
 	"$REPO_ROOT/router/etc/hotplug.d/button/50-sing-box-switch" \
+	"$REPO_ROOT/router/www/xray-panel-launcher.js" \
 	"$TARGET:/tmp/"
 
 echo ">>> installing on $TARGET"
@@ -76,6 +77,23 @@ chmod 0755                        /etc/init.d/sing-box
 cp /tmp/50-sing-box-switch        /etc/hotplug.d/button/50-sing-box-switch
 chmod 0755                        /etc/hotplug.d/button/50-sing-box-switch
 
+# Floating-button launcher injected into the GL.iNet stock admin UI
+# (/www/gl_home.html). One-time backup of the original; idempotent
+# re-patch on every install — looks for the marker before inserting.
+# Firmware updates that rewrite gl_home.html will undo the patch;
+# re-running this installer puts it back.
+cp /tmp/xray-panel-launcher.js    /www/xray-panel-launcher.js
+chmod 0644                        /www/xray-panel-launcher.js
+if [ -f /www/gl_home.html ]; then
+	[ -f /www/gl_home.html.bak ] || cp /www/gl_home.html /www/gl_home.html.bak
+	if ! grep -q xray-panel-launcher /www/gl_home.html; then
+		# Insert before </body>; busybox sed doesn't grok newlines in
+		# replacements, so the script tag goes inline on the same line.
+		sed -i 's|</body>|<script src="/xray-panel-launcher.js" defer></script></body>|' \
+			/www/gl_home.html
+	fi
+fi
+
 if [ ! -f /etc/xray-panel-cli/panel.yaml ]; then
 	cp /tmp/panel.example.yaml /etc/xray-panel-cli/panel.yaml
 	chmod 0600                 /etc/xray-panel-cli/panel.yaml
@@ -89,7 +107,7 @@ fi
 
 # Clean up tmp drops.
 rm -f /tmp/xray-panel-cli /tmp/xray-panel-cli.init /tmp/panel.example.yaml \
-      /tmp/sing-box /tmp/50-sing-box-switch
+      /tmp/sing-box /tmp/50-sing-box-switch /tmp/xray-panel-launcher.js
 
 # If the service is already enabled+running, restart it to pick up the
 # new binary. Don't auto-start the first install: panel.yaml still has
