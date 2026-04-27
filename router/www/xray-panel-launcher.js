@@ -185,8 +185,108 @@
         });
     }
 
+    // ── home-page service icon — turn green when sing-tun is up ─────
+    //
+    // GL.iNet's home page (#/internet) renders a row of service icons:
+    // AdGuard, IPv6, VPN, Tor. Native firmware lights "VPN" up in the
+    // brand teal when one of their stock VPN clients (WG / OVPN) is
+    // connected; ours is invisible to that logic, so the icon stays
+    // grey even when our sing-box tunnel is carrying traffic.
+    //
+    // Approach: poll a public probe endpoint on the panel. The probe
+    // is an <img> load — no CORS preflight, no credentials, just
+    // onload (200, tunnel up) vs onerror (404, tunnel down). The
+    // launcher applies our CSS class to the icon container, which
+    // styles the glyph + label in the GL.iNet teal regardless of what
+    // the SPA's own state machine thinks.
+    //
+    // We don't try to drive their internal Vue store: that would be
+    // brittle (minified field names) and would still fight back on
+    // the next periodic refresh.
+    var ICON_CSS_ID = "xray-vpn-icon-style";
+    var ICON_ACTIVE_CLASS = "xray-vpn-active";
+    var ICON_POLL_MS = 5000;
+
+    function injectIconCSS() {
+        if (document.getElementById(ICON_CSS_ID)) return;
+        var style = document.createElement("style");
+        style.id = ICON_CSS_ID;
+        // GL.iNet teal — same swatch used in their dashboard and in
+        // the panel's own dark theme.
+        style.textContent =
+            "." + ICON_ACTIVE_CLASS + " i.icon-vpn," +
+            "." + ICON_ACTIVE_CLASS + " .icon-vpn { color: #02b6d2 !important; }" +
+            "." + ICON_ACTIVE_CLASS + ", " +
+            "." + ICON_ACTIVE_CLASS + " span, " +
+            "." + ICON_ACTIVE_CLASS + " div { color: #02b6d2 !important; }";
+        document.head.appendChild(style);
+    }
+
+    // Find the home-page VPN service-icon container. Strategy: take
+    // every <i> with class .icon-vpn (the actual glyph), walk up a
+    // few levels until we hit a node whose subtree text equals "VPN"
+    // — that's the smallest container that includes both glyph and
+    // label, ignoring any taller ancestors (rows, cards, the page).
+    function findVPNServiceCell() {
+        var glyphs = document.querySelectorAll("i.icon-vpn, .icon-vpn");
+        for (var i = 0; i < glyphs.length; i++) {
+            var icon = glyphs[i];
+            var node = icon;
+            for (var d = 0; d < 5 && node; d++) {
+                var t = (node.textContent || "").trim();
+                if (/^vpn$/i.test(t)) return node;
+                node = node.parentElement;
+            }
+        }
+        return null;
+    }
+
+    function panelOriginNoSlash() {
+        return location.protocol.replace("https:", "http:") +
+               "//" + location.hostname + ":" + PORT;
+    }
+
+    function probeUp(onResult) {
+        var done = false;
+        var img = new Image();
+        var ts = Date.now();
+        function finish(ok) {
+            if (done) return;
+            done = true;
+            try { onResult(ok); } catch (e) {}
+        }
+        img.onload  = function () { finish(true); };
+        img.onerror = function () { finish(false); };
+        // Cache-bust so a 200 -> 404 transition is observed promptly
+        // even on ISPs that aggressively cache image responses.
+        img.src = panelOriginNoSlash() + "/api/up.png?ts=" + ts;
+        // Hard bound: if neither fires in 4s assume "down".
+        setTimeout(function () { finish(false); }, 4000);
+    }
+
+    function applyVPNIconState(active) {
+        var cell = findVPNServiceCell();
+        if (!cell) return;
+        var has = cell.classList.contains(ICON_ACTIVE_CLASS);
+        if (active && !has) cell.classList.add(ICON_ACTIVE_CLASS);
+        if (!active && has) cell.classList.remove(ICON_ACTIVE_CLASS);
+    }
+
+    function tickVPNIcon() {
+        injectIconCSS();
+        probeUp(applyVPNIconState);
+    }
+
+    function startVPNIconPoll() {
+        // First tick fires immediately so the icon flips on page load
+        // without waiting a full interval; subsequent ticks pace.
+        tickVPNIcon();
+        setInterval(tickVPNIcon, ICON_POLL_MS);
+    }
+
     function init() {
         try { renderSidebar(); } catch (e) {}
+        try { startVPNIconPoll(); } catch (e) {}
     }
 
     if (document.readyState === "loading") {
@@ -205,6 +305,10 @@
             setTimeout(function () {
                 pending = false;
                 if (!document.getElementById(SIDEBAR_ID)) renderSidebar();
+                // SPA may also rerender the topology view, dropping
+                // our class. Re-apply on the next probe cycle by
+                // simply forcing a tick — cheap (<10ms image probe).
+                tickVPNIcon();
             }, 250);
         }).observe(document.body, { childList: true, subtree: true });
     }

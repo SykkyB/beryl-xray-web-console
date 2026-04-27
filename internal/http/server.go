@@ -50,8 +50,11 @@ func NewServer(seed Server) *Server {
 	return &s
 }
 
-// Handler returns a net/http handler with all routes registered, wrapped
-// in basic-auth (panel-wide).
+// Handler returns a net/http handler with all routes registered. Most
+// routes are wrapped in basic-auth (panel-wide); a small allow-list of
+// "intentionally public" endpoints bypasses auth so cross-origin
+// callers (e.g. the GL.iNet stock home page polling us via <img>) can
+// reach them without a credential prompt.
 func (s *Server) Handler() nethttp.Handler {
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("GET /api/ping", s.handlePing)
@@ -69,7 +72,20 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/logs/stream", s.handleLogsStream)
 	registerUIRoutes(mux)
-	return BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
+	authed := BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
+
+	// /api/up.png is a "is sing-box tunnelling right now" probe used
+	// by the GL.iNet stock home-page launcher. Cross-origin <img>
+	// loads can't carry basic-auth without first triggering a browser
+	// password prompt, so this one route bypasses auth. Leaks only
+	// "tunnel up/down" — already inferable from any external request.
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method == nethttp.MethodGet && r.URL.Path == "/api/up.png" {
+			s.handleUpPing(w, r)
+			return
+		}
+		authed.ServeHTTP(w, r)
+	})
 }
 
 type pingResponse struct {
