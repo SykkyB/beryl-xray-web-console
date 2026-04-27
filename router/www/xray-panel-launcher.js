@@ -222,21 +222,57 @@
         document.head.appendChild(style);
     }
 
-    // Find the home-page VPN service-icon container. Strategy: take
-    // every <i> with class .icon-vpn (the actual glyph), walk up a
-    // few levels until we hit a node whose subtree text equals "VPN"
-    // — that's the smallest container that includes both glyph and
-    // label, ignoring any taller ancestors (rows, cards, the page).
+    // Find the home-page TOPOLOGY VPN service-icon — the one in the
+    // center row "AdGuard | IPv6 | VPN | Tor", NOT the VPN entry in
+    // the left sidebar. Both use the same .icon-vpn font-icon, so
+    // disambiguating by class alone doesn't work.
+    //
+    // Heuristic: among all .icon-vpn elements, pick the one whose
+    // grandparent (the row container) also contains at least one of
+    // .icon-adguard / .icon-ipv6 / .icon-tor as a sibling-tree icon.
+    // That combination only appears in the topology row; the sidebar
+    // has none of those siblings near the VPN entry.
+    //
+    // Returns the small container that wraps the icon-vpn glyph plus
+    // its "VPN" label — that's the smallest unit our CSS class can
+    // safely color without bleeding into neighbours.
     function findVPNServiceCell() {
+        var TOPO_SIBLING_CLASSES = [".icon-adguard", ".icon-ipv6", ".icon-tor"];
         var glyphs = document.querySelectorAll("i.icon-vpn, .icon-vpn");
         for (var i = 0; i < glyphs.length; i++) {
             var icon = glyphs[i];
+            // Walk up 1..5 ancestors looking for a row container that
+            // holds sibling service icons — proof we're in topology.
+            var ancestor = icon;
+            var foundRow = null;
+            for (var d = 0; d < 5 && ancestor; d++) {
+                var hasSibling = false;
+                for (var s = 0; s < TOPO_SIBLING_CLASSES.length; s++) {
+                    if (ancestor.querySelector(TOPO_SIBLING_CLASSES[s])) {
+                        hasSibling = true;
+                        break;
+                    }
+                }
+                if (hasSibling) {
+                    foundRow = ancestor;
+                    break;
+                }
+                ancestor = ancestor.parentElement;
+            }
+            if (!foundRow) continue;
+
+            // We're in topology. Now find the smallest sub-container
+            // *within* the row that holds this icon-vpn AND its "VPN"
+            // label, so we don't paint the whole row.
             var node = icon;
-            for (var d = 0; d < 5 && node; d++) {
+            for (var d2 = 0; d2 < 5 && node && node !== foundRow; d2++) {
                 var t = (node.textContent || "").trim();
                 if (/^vpn$/i.test(t)) return node;
                 node = node.parentElement;
             }
+            // Fallback: the icon's immediate parent (label sits in a
+            // sibling element we couldn't isolate cleanly).
+            return icon.parentElement || icon;
         }
         return null;
     }
