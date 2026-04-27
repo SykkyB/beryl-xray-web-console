@@ -211,6 +211,97 @@
     // are connected, so it's obvious which indicator is talking.
     var ACTIVE_COLOR = "#5272f7";
 
+    // Sidebar dot states. When our XRAY tunnel is active, the GL.iNet
+    // SPA's own state machine still shows green "is-active" dots next
+    // to VPN sub-items it cares about (VPN Dashboard, WireGuard
+    // Client, etc.) — irrelevant noise when the actual outbound is
+    // ours. Hide those, recolor the parent VPN section indicator
+    // blue, and put one blue dot on our XRAY launcher entry.
+    var SIDEBAR_CSS_ID = "xray-vpn-sidebar-style";
+    var SIDEBAR_MODE_CLASS = "xray-vpn-mode";          // on <body> while active
+    var SIDEBAR_TITLE_MARK = "xray-vpn-title";         // on the top-level VPN <el-submenu__title>
+    var SIDEBAR_DOT_CLASS = "xray-vpn-sidebar-dot";    // our injected blue dot
+
+    function injectSidebarCSS() {
+        if (document.getElementById(SIDEBAR_CSS_ID)) return;
+        var style = document.createElement("style");
+        style.id = SIDEBAR_CSS_ID;
+        var c = ACTIVE_COLOR;
+        // Selectors:
+        // 1. Hide stock dots inside any element under the sidebar VPN
+        //    section (data-testid prefix navbar.vpn.* covers the
+        //    submenu items; the marker class covers the top-level
+        //    title that doesn't always carry that data-testid).
+        // 2. Style our injected dot — small blue circle, inline so
+        //    it sits next to the menu label without disrupting the
+        //    row layout.
+        style.textContent =
+            "body." + SIDEBAR_MODE_CLASS + " [data-testid^='navbar.vpn'] .status-badge, " +
+            "body." + SIDEBAR_MODE_CLASS + " ." + SIDEBAR_TITLE_MARK + " .status-badge { " +
+                "display: none !important; " +
+            "} " +
+            "." + SIDEBAR_DOT_CLASS + " { " +
+                "display: inline-block; " +
+                "width: 8px; height: 8px; " +
+                "border-radius: 50%; " +
+                "background-color: " + c + " !important; " +
+                "margin-left: 8px; " +
+                "vertical-align: middle; " +
+                "flex-shrink: 0; " +
+            "}";
+        document.head.appendChild(style);
+    }
+
+    function findTopLevelVPNTitle() {
+        // The top-level VPN sidebar header is <div class="el-submenu__title">
+        // whose direct label leaf reads "VPN" (as opposed to "VPN
+        // Dashboard" / "VPN XRAY", which are submenu *items*, not titles).
+        var titles = document.querySelectorAll(".el-submenu__title");
+        for (var i = 0; i < titles.length; i++) {
+            var t = titles[i];
+            var leaves = t.querySelectorAll("span, em, b");
+            for (var j = 0; j < leaves.length; j++) {
+                var leaf = leaves[j];
+                if (leaf.children.length > 0) continue;
+                if ((leaf.textContent || "").trim() === "VPN") return t;
+            }
+        }
+        return null;
+    }
+
+    function makeBlueDot() {
+        var d = document.createElement("span");
+        d.className = SIDEBAR_DOT_CLASS;
+        return d;
+    }
+
+    function ensureDotIn(host) {
+        if (!host) return;
+        if (host.querySelector("." + SIDEBAR_DOT_CLASS)) return;
+        host.appendChild(makeBlueDot());
+    }
+
+    function applySidebarDots(active) {
+        injectSidebarCSS();
+        if (active) {
+            document.body.classList.add(SIDEBAR_MODE_CLASS);
+            var title = findTopLevelVPNTitle();
+            if (title) {
+                title.classList.add(SIDEBAR_TITLE_MARK);
+                ensureDotIn(title);
+            }
+            ensureDotIn(document.getElementById(SIDEBAR_ID));
+        } else {
+            document.body.classList.remove(SIDEBAR_MODE_CLASS);
+            var marked = document.querySelectorAll("." + SIDEBAR_TITLE_MARK);
+            for (var i = 0; i < marked.length; i++) {
+                marked[i].classList.remove(SIDEBAR_TITLE_MARK);
+            }
+            var dots = document.querySelectorAll("." + SIDEBAR_DOT_CLASS);
+            for (var j = 0; j < dots.length; j++) dots[j].remove();
+        }
+    }
+
     function injectIconCSS() {
         if (document.getElementById(ICON_CSS_ID)) return;
         var style = document.createElement("style");
@@ -330,6 +421,11 @@
     }
 
     function applyVPNIconState(active) {
+        // Sync sidebar dot state on every tick so SPA repaints don't
+        // un-paint our marker — class on body + class on title +
+        // injected dots are all idempotent re-applies.
+        applySidebarDots(active);
+
         var cell = findVPNServiceCell();
 
         // Stale-cleanup sweep: earlier launcher versions painted the
