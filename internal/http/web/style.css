@@ -400,7 +400,8 @@ main {
 }
 .form-grid .lbl-wide { grid-column: 1 / -1; }
 .form-grid input[type="text"],
-.form-grid input[type="number"] {
+.form-grid input[type="number"],
+.form-grid select {
     width: 100%;
     padding: 7px 9px;
     margin-top: 3px;
@@ -411,7 +412,8 @@ main {
     border: 1px solid var(--border);
     border-radius: 5px;
 }
-.form-grid input:focus { outline: none; border-color: var(--accent); }
+.form-grid input:focus,
+.form-grid select:focus { outline: none; border-color: var(--accent); }
 
 @media (max-width: 540px) {
     .form-grid { grid-template-columns: 1fr; }

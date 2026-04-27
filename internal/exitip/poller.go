@@ -70,7 +70,29 @@ func (p *Poller) hc() *nethttp.Client {
 	if p.HC != nil {
 		return p.HC
 	}
-	return &nethttp.Client{Timeout: p.timeout()}
+	// Fresh transport with keep-alives disabled. Without this we'd
+	// share http.DefaultTransport's idle-connection pool with the rest
+	// of the process — and a TCP socket that survived a sing-box
+	// selector switch can return the *previous* outbound's exit IP on
+	// reuse, which is exactly the stale-IP bug we kept hitting after
+	// activating a different profile.
+	return &nethttp.Client{
+		Timeout:   p.timeout(),
+		Transport: &nethttp.Transport{DisableKeepAlives: true},
+	}
+}
+
+// Invalidate clears the cached IP so /api/live shows "—" until the
+// next fetch returns. Called by the panel when an action that changes
+// outbound routing is performed (profile activate / service restart),
+// so the user doesn't see a stale value for the few seconds before
+// RefreshNow lands.
+func (p *Poller) Invalidate() {
+	p.mu.Lock()
+	p.value = ""
+	p.fetchedAt = time.Time{}
+	p.lastErr = nil
+	p.mu.Unlock()
 }
 
 // Start runs the poller until ctx is cancelled. Safe to call once per

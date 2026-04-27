@@ -60,8 +60,12 @@ type profileResponse struct {
 	Flow        string    `json:"flow,omitempty"`
 	SNI         string    `json:"sni"`
 	Fingerprint string    `json:"fingerprint,omitempty"`
-	PublicKey   string    `json:"public_key"`
-	ShortID     string    `json:"short_id"`
+	PublicKey   string    `json:"public_key,omitempty"`
+	ShortID     string    `json:"short_id,omitempty"`
+	Type        string    `json:"type"`     // tcp / ws (empty defaults to tcp)
+	Security    string    `json:"security"` // reality / tls
+	Path        string    `json:"path,omitempty"`
+	Host        string    `json:"host,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Active      bool      `json:"active"`
@@ -79,6 +83,10 @@ func toResponse(p store.Profile, active bool) profileResponse {
 		Fingerprint: p.Fingerprint,
 		PublicKey:   p.PublicKey,
 		ShortID:     p.ShortID,
+		Type:        p.EffectiveType(),
+		Security:    p.EffectiveSecurity(),
+		Path:        p.Path,
+		Host:        p.Host,
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 		Active:      active,
@@ -165,13 +173,48 @@ func (s *Server) handleProfilesImportVless(w nethttp.ResponseWriter, r *nethttp.
 		Fingerprint: parsed.Fingerprint,
 		PublicKey:   parsed.PublicKey,
 		ShortID:     parsed.ShortID,
+		Type:        parsed.Type,
+		Security:    parsed.Security,
+		Path:        parsed.Path,
+		Host:        parsed.Host,
 	}
 	if err := s.Profiles.Add(prof); err != nil {
 		writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("save: %w", err))
 		return
 	}
 
-	writeJSON(w, nethttp.StatusCreated, toResponse(prof, false))
+	// Render + reload so the new profile becomes a real outbound in
+	// the running sing-box. Without this the profile lives only in
+	// profiles.json and clash-API delay-test on its tag returns
+	// "Resource not found" — confusing the UI into displaying TIMEOUT
+	// for a perfectly fine profile until the user happens to activate
+	// it (which forces the same render+reload as a side effect).
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	all, _ := s.Profiles.List()
+	activeID, _ := s.UCI.Get(ctx, uciActiveKey)
+	if activeID == "" {
+		// First profile ever — make this one the selector default so
+		// the rendered config has a valid `default` field.
+		activeID = prof.ID
+	}
+	if err := s.Renderer.WriteAndCheck(ctx, all, activeID); err != nil {
+		writeErr(w, nethttp.StatusBadRequest, fmt.Errorf("render: %w", err))
+		return
+	}
+	reloaded := false
+	if running, _ := s.Probe.SingBoxRunning(ctx); running {
+		if err := s.Service.Do(ctx, service.ActionReload); err != nil {
+			writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("reload: %w", err))
+			return
+		}
+		_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
+		reloaded = true
+	}
+
+	_ = reloaded // surfaced via fetchState/fetchProfiles refresh from the UI
+	writeJSON(w, nethttp.StatusCreated, toResponse(prof, prof.ID == activeID))
 }
 
 // profilePatchReq is the body shape of PATCH /api/profiles/{id}.
@@ -188,6 +231,10 @@ type profilePatchReq struct {
 	Fingerprint *string `json:"fingerprint,omitempty"`
 	PublicKey   *string `json:"public_key,omitempty"`
 	ShortID     *string `json:"short_id,omitempty"`
+	Type        *string `json:"type,omitempty"`
+	Security    *string `json:"security,omitempty"`
+	Path        *string `json:"path,omitempty"`
+	Host        *string `json:"host,omitempty"`
 }
 
 func (s *Server) handleProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -241,13 +288,29 @@ func (s *Server) handleProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request
 	if req.ShortID != nil {
 		existing.ShortID = *req.ShortID
 	}
+	if req.Type != nil {
+		existing.Type = *req.Type
+	}
+	if req.Security != nil {
+		existing.Security = *req.Security
+	}
+	if req.Path != nil {
+		existing.Path = *req.Path
+	}
+	if req.Host != nil {
+		existing.Host = *req.Host
+	}
 
 	// Validate the result has every required field — easy to forget
 	// that PATCH means partial input but the *result* must be whole.
-	if existing.Server == "" || existing.Port < 1 || existing.UUID == "" ||
-		existing.SNI == "" || existing.PublicKey == "" || existing.ShortID == "" {
+	if existing.Server == "" || existing.Port < 1 || existing.UUID == "" {
 		writeErr(w, nethttp.StatusBadRequest,
-			fmt.Errorf("after patch the profile is missing one of: server, port, uuid, sni, public_key, short_id"))
+			fmt.Errorf("after patch the profile is missing one of: server, port, uuid"))
+		return
+	}
+	if existing.EffectiveSecurity() == "reality" && existing.PublicKey == "" {
+		writeErr(w, nethttp.StatusBadRequest,
+			fmt.Errorf("Reality security requires public_key"))
 		return
 	}
 
@@ -311,7 +374,38 @@ func (s *Server) handleProfileDelete(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true, "id": id})
+
+	// Re-render so the deleted outbound disappears from the running
+	// sing-box. Otherwise it lingers in /etc/sing-box/config.json and
+	// keeps showing up in clash-API's selector list — confusing UI
+	// and inviting accidental traffic through a profile the user
+	// thought was gone. Symmetric to the render-on-Add fix.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	all, _ := s.Profiles.List()
+	reloaded := false
+	if len(all) > 0 {
+		// activeID is guaranteed non-empty here (we checked active!=id
+		// earlier), but fall back to the first remaining profile in
+		// case UCI lost the value somehow.
+		if activeID == "" {
+			activeID = all[0].ID
+		}
+		if err := s.Renderer.WriteAndCheck(ctx, all, activeID); err != nil {
+			writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("render after delete: %w", err))
+			return
+		}
+		if running, _ := s.Probe.SingBoxRunning(ctx); running {
+			if err := s.Service.Do(ctx, service.ActionReload); err != nil {
+				writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("reload: %w", err))
+				return
+			}
+			_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
+			reloaded = true
+		}
+	}
+
+	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true, "id": id, "reloaded": reloaded})
 }
 
 // handleProfileDelay measures latency through a specific profile by

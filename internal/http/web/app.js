@@ -169,11 +169,12 @@
             list.innerHTML = profiles.map((p) => {
                 const cached = latencyCache[p.id];
                 const pingPill = cached ? renderPingPill(cached) : "";
+                const transport = (p.type || "tcp") + "+" + (p.security || "reality");
                 return `
                 <li class="profile-row${p.active ? " is-active" : ""}" data-id="${escapeHTML(p.id)}">
                     <div class="profile-info">
-                        <div class="profile-name">${escapeHTML(p.name)}${p.active ? ` <span class="pill pill-ok">ACTIVE</span>` : ""} ${pingPill}</div>
-                        <div class="profile-meta">${escapeHTML(p.server)}:${p.port} · uuid ${escapeHTML(p.uuid_mask)}${p.flow ? " · flow " + escapeHTML(p.flow) : ""}</div>
+                        <div class="profile-name">${escapeHTML(p.name)}${p.active ? ` <span class="pill pill-ok">ACTIVE</span>` : ""} <span class="pill pill-muted">${escapeHTML(transport)}</span> ${pingPill}</div>
+                        <div class="profile-meta">${escapeHTML(p.server)}:${p.port} · uuid ${escapeHTML(p.uuid_mask)}${p.flow ? " · flow " + escapeHTML(p.flow) : ""}${p.path ? " · path " + escapeHTML(p.path) : ""}</div>
                     </div>
                     <div class="profile-actions">
                         ${p.active ? "" : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`}
@@ -299,6 +300,12 @@
                     const note = data.switched ? " (instant switch)" :
                                  data.reloaded ? " (reloaded)" : " (will start on next Start)";
                     setActionResult(`Profile "${data.profile_name}" activated${note}`, true);
+                    // The latency pill from any prior test is now stale —
+                    // it was measured against a different selector default.
+                    // Drop it and re-test in the background so the user
+                    // sees a fresh result without staring at the old badge.
+                    delete latencyCache[id];
+                    testProfile(id).catch(() => {});
                 } else if (act === "delete") {
                     if (!confirm("Delete this profile?")) return;
                     await fetch("/api/profiles/" + encodeURIComponent(id), {
@@ -348,6 +355,7 @@
 
         const editor = document.createElement("div");
         editor.className = "profile-editor";
+        const sel = (val, opts) => opts.map((o) => `<option value="${o}"${o === val ? " selected" : ""}>${o}</option>`).join("");
         editor.innerHTML = `
             <div class="profile-form">
                 <div class="form-grid">
@@ -356,10 +364,14 @@
                     <label class="lbl-block">Server <input type="text" data-f="server" value="${escapeHTML(profile.server || "")}"></label>
                     <label class="lbl-block">Port <input type="number" data-f="port" min="1" max="65535" value="${profile.port || ""}"></label>
                     <label class="lbl-block lbl-wide">UUID <input type="text" data-f="uuid" value="${escapeHTML(profile.uuid || "")}"></label>
+                    <label class="lbl-block">Transport <select data-f="type">${sel(profile.type || "tcp", ["tcp","ws"])}</select></label>
+                    <label class="lbl-block">Security <select data-f="security">${sel(profile.security || "reality", ["reality","tls"])}</select></label>
                     <label class="lbl-block">SNI <input type="text" data-f="sni" value="${escapeHTML(profile.sni || "")}"></label>
                     <label class="lbl-block">Fingerprint <input type="text" data-f="fingerprint" value="${escapeHTML(profile.fingerprint || "")}"></label>
-                    <label class="lbl-block lbl-wide">Public key <input type="text" data-f="public_key" value="${escapeHTML(profile.public_key || "")}"></label>
-                    <label class="lbl-block">Short ID <input type="text" data-f="short_id" value="${escapeHTML(profile.short_id || "")}"></label>
+                    <label class="lbl-block lbl-wide">Public key (Reality) <input type="text" data-f="public_key" value="${escapeHTML(profile.public_key || "")}"></label>
+                    <label class="lbl-block">Short ID (Reality) <input type="text" data-f="short_id" value="${escapeHTML(profile.short_id || "")}"></label>
+                    <label class="lbl-block">WS Path <input type="text" data-f="path" placeholder="/" value="${escapeHTML(profile.path || "")}"></label>
+                    <label class="lbl-block">WS Host <input type="text" data-f="host" placeholder="(empty = same as Server)" value="${escapeHTML(profile.host || "")}"></label>
                 </div>
                 <div class="action-row">
                     <button class="btn-action btn-primary" data-edit-act="save">Save</button>

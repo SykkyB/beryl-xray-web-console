@@ -13,10 +13,16 @@ import (
 // nudgeExitIP triggers an out-of-band exit-IP refresh after any action
 // that might change connectivity (service start/stop, profile change,
 // killswitch / bind toggle). Best-effort: never blocks the response.
+//
+// The cached value is invalidated *before* the refresh fires so the UI
+// shows "—" for the brief window between the action and the new fetch
+// landing — better than displaying the previous outbound's exit IP for
+// up to 30s while the next scheduled poll waits.
 func (s *Server) nudgeExitIP() {
 	if s.ExitIP == nil {
 		return
 	}
+	s.ExitIP.Invalidate()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
