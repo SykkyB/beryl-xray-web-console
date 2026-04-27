@@ -46,14 +46,16 @@ const uciActiveKey = "sing-box.config.active_profile"
 const uciPackage = "sing-box"
 
 // profileResponse is the per-profile shape the API returns. UUID is
-// masked because it is the auth credential — full UUID is only needed
-// internally when rendering the sing-box config.
+// masked by default because it is the auth credential — full UUID is
+// included only when explicitly requested (?reveal=1) for the edit
+// flow.
 type profileResponse struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Server      string    `json:"server"`
 	Port        int       `json:"port"`
 	UUIDMask    string    `json:"uuid_mask"`
+	UUID        string    `json:"uuid,omitempty"` // only when ?reveal=1
 	Flow        string    `json:"flow,omitempty"`
 	SNI         string    `json:"sni"`
 	Fingerprint string    `json:"fingerprint,omitempty"`
@@ -82,6 +84,15 @@ func toResponse(p store.Profile, active bool) profileResponse {
 	}
 }
 
+// toResponseFull is toResponse + the un-masked UUID. Used by the edit
+// flow so the form can pre-fill every field. Callers must gate this
+// on an explicit ?reveal=1 from a basic-auth'd LAN client.
+func toResponseFull(p store.Profile, active bool) profileResponse {
+	r := toResponse(p, active)
+	r.UUID = p.UUID
+	return r
+}
+
 // maskUUID returns "11406a7a-…-c909c36" so the UI can show "this is the
 // right profile" without the full secret. Anything shorter than ~16
 // chars is returned as-is to avoid accidentally leaking.
@@ -98,15 +109,20 @@ func (s *Server) handleProfilesList(w nethttp.ResponseWriter, r *nethttp.Request
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return
 	}
+	reveal := r.URL.Query().Get("reveal") == "1"
 	activeID, _ := s.UCI.Get(r.Context(), uciActiveKey)
 	out := make([]profileResponse, 0, len(list))
 	for _, p := range list {
-		out = append(out, toResponse(p, p.ID == activeID))
+		if reveal {
+			out = append(out, toResponseFull(p, p.ID == activeID))
+		} else {
+			out = append(out, toResponse(p, p.ID == activeID))
+		}
 	}
 	writeJSON(w, nethttp.StatusOK, map[string]any{
-		"profiles":   out,
-		"active_id":  activeID,
-		"generated":  time.Now().UTC().Format(time.RFC3339),
+		"profiles":  out,
+		"active_id": activeID,
+		"generated": time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
@@ -155,6 +171,124 @@ func (s *Server) handleProfilesImportVless(w nethttp.ResponseWriter, r *nethttp.
 	}
 
 	writeJSON(w, nethttp.StatusCreated, toResponse(prof, false))
+}
+
+// profilePatchReq is the body shape of PATCH /api/profiles/{id}.
+// Any field set replaces the existing one; omitted fields stay as-is.
+// Pointers used so we can tell "field set to empty string" apart from
+// "field not present in request".
+type profilePatchReq struct {
+	Name        *string `json:"name,omitempty"`
+	Server      *string `json:"server,omitempty"`
+	Port        *int    `json:"port,omitempty"`
+	UUID        *string `json:"uuid,omitempty"`
+	Flow        *string `json:"flow,omitempty"`
+	SNI         *string `json:"sni,omitempty"`
+	Fingerprint *string `json:"fingerprint,omitempty"`
+	PublicKey   *string `json:"public_key,omitempty"`
+	ShortID     *string `json:"short_id,omitempty"`
+}
+
+func (s *Server) handleProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, nethttp.StatusBadRequest, fmt.Errorf("missing id"))
+		return
+	}
+
+	var req profilePatchReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, nethttp.StatusBadRequest, fmt.Errorf("parse body: %w", err))
+		return
+	}
+
+	existing, err := s.Profiles.Get(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, nethttp.StatusNotFound, err)
+			return
+		}
+		writeErr(w, nethttp.StatusInternalServerError, err)
+		return
+	}
+
+	// Apply set fields onto existing.
+	if req.Name != nil {
+		existing.Name = *req.Name
+	}
+	if req.Server != nil {
+		existing.Server = *req.Server
+	}
+	if req.Port != nil {
+		existing.Port = *req.Port
+	}
+	if req.UUID != nil {
+		existing.UUID = *req.UUID
+	}
+	if req.Flow != nil {
+		existing.Flow = *req.Flow
+	}
+	if req.SNI != nil {
+		existing.SNI = *req.SNI
+	}
+	if req.Fingerprint != nil {
+		existing.Fingerprint = *req.Fingerprint
+	}
+	if req.PublicKey != nil {
+		existing.PublicKey = *req.PublicKey
+	}
+	if req.ShortID != nil {
+		existing.ShortID = *req.ShortID
+	}
+
+	// Validate the result has every required field — easy to forget
+	// that PATCH means partial input but the *result* must be whole.
+	if existing.Server == "" || existing.Port < 1 || existing.UUID == "" ||
+		existing.SNI == "" || existing.PublicKey == "" || existing.ShortID == "" {
+		writeErr(w, nethttp.StatusBadRequest,
+			fmt.Errorf("after patch the profile is missing one of: server, port, uuid, sni, public_key, short_id"))
+		return
+	}
+
+	if err := s.Profiles.Update(existing); err != nil {
+		writeErr(w, nethttp.StatusInternalServerError, err)
+		return
+	}
+
+	// Re-render config so the on-disk version reflects the edited
+	// profile. If sing-box is running, reload (changing server/uuid/
+	// reality bits requires a real outbound rebuild — clash-API has
+	// no way to mutate outbound parameters in place).
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	all, _ := s.Profiles.List()
+	activeID, _ := s.UCI.Get(ctx, uciActiveKey)
+	if len(all) > 0 {
+		if err := s.Renderer.WriteAndCheck(ctx, all, activeID); err != nil {
+			writeErr(w, nethttp.StatusBadRequest, fmt.Errorf("render: %w", err))
+			return
+		}
+	}
+
+	reloaded := false
+	if running, _ := s.Probe.SingBoxRunning(ctx); running {
+		if err := s.Service.Do(ctx, service.ActionReload); err != nil {
+			writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("reload: %w", err))
+			return
+		}
+		_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
+		reloaded = true
+	}
+
+	s.nudgeExitIP()
+
+	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"ok":       true,
+		"id":       id,
+		"reloaded": reloaded,
+		"profile":  toResponse(existing, id == activeID),
+	})
 }
 
 func (s *Server) handleProfileDelete(w nethttp.ResponseWriter, r *nethttp.Request) {

@@ -61,6 +61,7 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("POST /api/bind_switch", s.handleBindSwitch)
 	mux.HandleFunc("GET /api/profiles", s.handleProfilesList)
 	mux.HandleFunc("POST /api/profiles/import-vless", s.handleProfilesImportVless)
+	mux.HandleFunc("PATCH /api/profiles/{id}", s.handleProfilePatch)
 	mux.HandleFunc("DELETE /api/profiles/{id}", s.handleProfileDelete)
 	mux.HandleFunc("POST /api/profiles/{id}/activate", s.handleProfileActivate)
 	mux.HandleFunc("GET /api/live", s.handleLive)

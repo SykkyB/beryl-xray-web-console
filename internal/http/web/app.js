@@ -150,6 +150,11 @@
 
     async function fetchProfiles() {
         const list = $("#profile-list");
+        // Don't clobber an open editor: auto-refresh would otherwise
+        // wipe the form mid-typing once the 30s tick fires.
+        if (list.querySelector(".profile-editor")) {
+            return;
+        }
         try {
             const r = await fetch("/api/profiles", { credentials: "same-origin" });
             if (!r.ok) throw new Error("HTTP " + r.status);
@@ -162,13 +167,14 @@
             }
 
             list.innerHTML = profiles.map((p) => `
-                <li class="profile-row${p.active ? " is-active" : ""}">
+                <li class="profile-row${p.active ? " is-active" : ""}" data-id="${escapeHTML(p.id)}">
                     <div class="profile-info">
                         <div class="profile-name">${escapeHTML(p.name)}${p.active ? ` <span class="pill pill-ok">ACTIVE</span>` : ""}</div>
                         <div class="profile-meta">${escapeHTML(p.server)}:${p.port} · uuid ${escapeHTML(p.uuid_mask)}${p.flow ? " · flow " + escapeHTML(p.flow) : ""}</div>
                     </div>
                     <div class="profile-actions">
                         ${p.active ? "" : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`}
+                        <button class="btn-action" data-act="edit" data-id="${escapeHTML(p.id)}">Edit</button>
                         ${p.active ? "" : `<button class="btn-action btn-danger"  data-act="delete"   data-id="${escapeHTML(p.id)}">Delete</button>`}
                     </div>
                 </li>
@@ -205,11 +211,16 @@
         const id = btn.dataset.id;
         const act = btn.dataset.act;
         if (!id || !act) return;
+        if (act === "edit") {
+            await openProfileEditor(id, btn);
+            return;
+        }
         await setBusy(btn, async () => {
             try {
                 if (act === "activate") {
                     const data = await postJSON("/api/profiles/" + encodeURIComponent(id) + "/activate", {});
-                    const note = data.reloaded ? " (reloaded)" : " (will start on next Start)";
+                    const note = data.switched ? " (instant switch)" :
+                                 data.reloaded ? " (reloaded)" : " (will start on next Start)";
                     setActionResult(`Profile "${data.profile_name}" activated${note}`, true);
                 } else if (act === "delete") {
                     if (!confirm("Delete this profile?")) return;
@@ -229,6 +240,92 @@
             } catch (err) {
                 setActionResult(act + " failed: " + err.message, false);
             }
+        });
+    }
+
+    async function openProfileEditor(id, anchorBtn) {
+        const row = anchorBtn.closest(".profile-row");
+        if (!row) return;
+
+        // Close any other open editors first.
+        $$(".profile-editor").forEach((el) => el.remove());
+        if (row.classList.contains("editing")) {
+            row.classList.remove("editing");
+            return;
+        }
+        row.classList.add("editing");
+
+        // Pull the full profile (un-masked UUID) to pre-fill the form.
+        let profile;
+        try {
+            const r = await fetch("/api/profiles?reveal=1", { credentials: "same-origin" });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const data = await r.json();
+            profile = (data.profiles || []).find((p) => p.id === id);
+            if (!profile) throw new Error("not found");
+        } catch (err) {
+            setActionResult("Failed to load profile: " + err.message, false);
+            row.classList.remove("editing");
+            return;
+        }
+
+        const editor = document.createElement("div");
+        editor.className = "profile-editor";
+        editor.innerHTML = `
+            <div class="profile-form">
+                <div class="form-grid">
+                    <label class="lbl-block">Name <input type="text" data-f="name" value="${escapeHTML(profile.name || "")}"></label>
+                    <label class="lbl-block">Flow <input type="text" data-f="flow" value="${escapeHTML(profile.flow || "")}"></label>
+                    <label class="lbl-block">Server <input type="text" data-f="server" value="${escapeHTML(profile.server || "")}"></label>
+                    <label class="lbl-block">Port <input type="number" data-f="port" min="1" max="65535" value="${profile.port || ""}"></label>
+                    <label class="lbl-block lbl-wide">UUID <input type="text" data-f="uuid" value="${escapeHTML(profile.uuid || "")}"></label>
+                    <label class="lbl-block">SNI <input type="text" data-f="sni" value="${escapeHTML(profile.sni || "")}"></label>
+                    <label class="lbl-block">Fingerprint <input type="text" data-f="fingerprint" value="${escapeHTML(profile.fingerprint || "")}"></label>
+                    <label class="lbl-block lbl-wide">Public key <input type="text" data-f="public_key" value="${escapeHTML(profile.public_key || "")}"></label>
+                    <label class="lbl-block">Short ID <input type="text" data-f="short_id" value="${escapeHTML(profile.short_id || "")}"></label>
+                </div>
+                <div class="action-row">
+                    <button class="btn-action btn-primary" data-edit-act="save">Save</button>
+                    <button class="btn-action" data-edit-act="cancel">Cancel</button>
+                </div>
+            </div>
+        `;
+        row.after(editor);
+
+        editor.querySelector('[data-edit-act="cancel"]').addEventListener("click", () => {
+            editor.remove();
+            row.classList.remove("editing");
+        });
+        editor.querySelector('[data-edit-act="save"]').addEventListener("click", async (e) => {
+            const btn = e.target;
+            await setBusy(btn, async () => {
+                const body = {};
+                editor.querySelectorAll("[data-f]").forEach((el) => {
+                    const f = el.dataset.f;
+                    let v = el.value;
+                    if (f === "port") v = Number(v);
+                    body[f] = v;
+                });
+                try {
+                    const data = await fetch("/api/profiles/" + encodeURIComponent(id), {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "same-origin",
+                        body: JSON.stringify(body),
+                    }).then(async (r) => {
+                        const j = await r.json().catch(() => ({}));
+                        if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+                        return j;
+                    });
+                    setActionResult(`Profile saved${data.reloaded ? " (sing-box reloaded)" : ""}`, true);
+                    editor.remove();
+                    row.classList.remove("editing");
+                    await fetchProfiles();
+                    await fetchState();
+                } catch (err) {
+                    setActionResult("Save failed: " + err.message, false);
+                }
+            });
         });
     }
 
