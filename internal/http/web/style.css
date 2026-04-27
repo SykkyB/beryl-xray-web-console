@@ -1,34 +1,59 @@
-/* xray-panel-cli — dark navy theme inspired by the GL.iNet stock UI.
-   Phase 2B / 2D draft. Will be polished in 2F to match GL.iNet pixel-
-   for-pixel (fonts, icons, spacing). */
+/* xray-panel-cli — dark theme matched to the GL.iNet stock admin UI
+   (their /www/theme/base.css palette). Tokens prefixed with --gl- come
+   directly from their stylesheet so cards we render sit naturally next
+   to a tab on their console. */
 
 :root {
-    --bg:           #0b1426;
-    --bg-elev:     #122036;
-    --card:        #16243d;
-    --card-head:   #1a2c4a;
-    --border:      #213a5e;
-    --border-soft: #1b2f4d;
+    /* GL.iNet palette tokens, copied verbatim from /www/theme/base.css */
+    --gl-purple-500: #333366;
+    --gl-purple-700: #1f1f3d;
+    --gl-purple-800: #141427;
+    --gl-purple-900: #0a0a14;
+    --gl-blue-500:   #5272f7;
+    --gl-blue-700:   #425bc6;
+    --gl-teal-500:   #02b6d2;
+    --gl-green-500:  #00c8b5;
+    --gl-green-700:  #00a091;
+    --gl-yellow-500: #f5a623;
+    --gl-red-500:    #e04c7e;
+    --gl-gray-200:   #d2d2d6;
+    --gl-gray-300:   #b9b9bd;
+    --gl-gray-400:   #a0a0a3;
+    --gl-gray-500:   #87878a;
+    --gl-gray-700:   #555557;
 
-    --text:        #e6ecf5;
-    --text-dim:    #9bb0cc;
-    --text-muted:  #6f87a6;
+    /* Semantic mapping the rest of this stylesheet uses */
+    --bg:          var(--gl-purple-900);          /* page */
+    --bg-elev:     var(--gl-purple-800);          /* form fields, ghost btn */
+    --card:        var(--gl-purple-800);          /* main card body */
+    --card-head:   var(--gl-purple-700);          /* card header strip */
+    --border:      #2a2a4a;                       /* slightly lighter than purple-700 for visible edges */
+    --border-soft: #1c1c33;
 
-    --accent:      #3b82f6;
+    --text:        #ffffff;
+    --text-dim:    var(--gl-gray-300);
+    --text-muted:  var(--gl-gray-500);
+
+    --accent:      var(--gl-blue-500);
     --accent-fg:   #ffffff;
-    --accent-soft: rgba(59, 130, 246, 0.12);
+    --accent-soft: rgba(82, 114, 247, 0.14);
 
-    --success:     #34d399;
-    --success-bg:  rgba(52, 211, 153, 0.12);
-    --danger:      #f87171;
-    --danger-bg:   rgba(248, 113, 113, 0.12);
-    --warn:        #fbbf24;
-    --warn-bg:     rgba(251, 191, 36, 0.12);
-    --neutral:     #6f87a6;
-    --neutral-bg:  rgba(111, 135, 166, 0.18);
+    --success:     var(--gl-green-500);
+    --success-bg:  rgba(0, 200, 181, 0.14);
+    --danger:      var(--gl-red-500);
+    --danger-bg:   rgba(224, 76, 126, 0.14);
+    --warn:        var(--gl-yellow-500);
+    --warn-bg:     rgba(245, 166, 35, 0.14);
+    --neutral:     var(--gl-gray-500);
+    --neutral-bg:  rgba(135, 135, 138, 0.18);
+
+    /* GL.iNet's UI uses teal as a highlight accent for "in use" / "live"
+       states (the green dot in their VPN dashboard). We borrow it for
+       the ACTIVE pill on the active profile. */
+    --highlight:   var(--gl-teal-500);
 
     --radius:      8px;
-    --shadow:      0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow:      0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 * { box-sizing: border-box; }
@@ -68,8 +93,11 @@ button, a {
 /* ── header ──────────────────────────────────────────────────────────── */
 
 header {
-    background: linear-gradient(180deg, #0d1a30 0%, #0b1426 100%);
-    border-bottom: 1px solid var(--border);
+    /* GL.iNet's top bar is a slightly-purple deep navy. Mimicked with a
+       gradient from their gl-purple-700 down to gl-purple-900 so the
+       eye reads the same "premium dark dashboard" cue. */
+    background: linear-gradient(180deg, var(--gl-purple-700) 0%, var(--gl-purple-900) 100%);
+    border-bottom: 1px solid var(--gl-purple-500);
 }
 
 .header-inner {
@@ -300,8 +328,15 @@ main {
     flex-wrap: wrap;
 }
 .profile-row.is-active {
-    border-color: var(--accent);
-    background: var(--accent-soft);
+    border-color: var(--highlight);
+    background: rgba(2, 182, 210, 0.08);
+}
+/* GL.iNet uses a teal "live" tone for ACTIVE markers; reuse it
+   exclusively for the active-profile pill (everything else stays on
+   the green semantic for "ok / running"). */
+.profile-row.is-active .pill.pill-ok {
+    background: rgba(2, 182, 210, 0.18);
+    color: var(--highlight);
 }
 
 .profile-info {
