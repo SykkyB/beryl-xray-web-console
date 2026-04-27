@@ -236,7 +236,14 @@
         //    it sits next to the menu label without disrupting the
         //    row layout.
         style.textContent =
-            "body." + SIDEBAR_MODE_CLASS + " [data-testid^='navbar.vpn'] .status-badge, " +
+            // Hide every stock .status-badge anywhere under the
+            // sidebar VPN section. Three selectors cover three nest
+            // shapes: the top-level <li class="el-submenu"
+            // data-testid="navbar.vpn.button"> (its own title +
+            // submenu items), explicit .el-submenu__title scoped by
+            // our marker class, and submenu items by their data-testid.
+            "body." + SIDEBAR_MODE_CLASS + " li.el-submenu[data-testid^='navbar.vpn'] .status-badge, " +
+            "body." + SIDEBAR_MODE_CLASS + " li.el-menu-item[data-testid^='navbar.vpn'] .status-badge, " +
             "body." + SIDEBAR_MODE_CLASS + " ." + SIDEBAR_TITLE_MARK + " .status-badge { " +
                 "display: none !important; " +
             "} " +
@@ -281,6 +288,28 @@
         host.appendChild(makeBlueDot());
     }
 
+    // Insert the blue dot at the same DOM position the stock
+    // .status-badge used to sit — right after the .menu-title span,
+    // before the .el-submenu__icon-arrow chevron. The title is
+    // display:flex; a plain appendChild lands the dot AFTER the
+    // chevron, which on a narrow sidebar pushes it out of view.
+    function ensureDotInTitle(title) {
+        if (!title) return;
+        if (title.querySelector("." + SIDEBAR_DOT_CLASS)) return;
+        var dot = makeBlueDot();
+        var arrow = title.querySelector(".el-submenu__icon-arrow");
+        if (arrow && arrow.parentElement === title) {
+            title.insertBefore(dot, arrow);
+            return;
+        }
+        var menuTitle = title.querySelector(".menu-title, .uppercase");
+        if (menuTitle && menuTitle.parentElement === title) {
+            title.insertBefore(dot, menuTitle.nextSibling);
+            return;
+        }
+        title.appendChild(dot);
+    }
+
     function applySidebarDots(active) {
         injectSidebarCSS();
         if (active) {
@@ -288,7 +317,7 @@
             var title = findTopLevelVPNTitle();
             if (title) {
                 title.classList.add(SIDEBAR_TITLE_MARK);
-                ensureDotIn(title);
+                ensureDotInTitle(title);
             }
             ensureDotIn(document.getElementById(SIDEBAR_ID));
         } else {
