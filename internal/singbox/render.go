@@ -72,6 +72,14 @@ type renderProfile struct {
 	Fingerprint string
 	PublicKey   string
 	ShortID     string
+
+	// Boolean shortcuts the template branches on. Computed in Render
+	// from the Profile's Type / Security so the template stays simple.
+	IsWS      bool
+	IsReality bool
+
+	Path string // WS path (only meaningful when IsWS)
+	Host string // WS Host header (only meaningful when IsWS)
 }
 
 type renderData struct {
@@ -114,16 +122,37 @@ func Render(profiles []store.Profile, activeID string) ([]byte, error) {
 			fp = "chrome"
 		}
 		tag := TagOf(p)
+		isWS := p.EffectiveType() == "ws"
+		isReality := p.EffectiveSecurity() == "reality"
+		path := p.Path
+		if isWS && path == "" {
+			path = "/"
+		}
+		// SNI fallback: WS+TLS configs sometimes omit sni, expecting
+		// the host header to drive cert verification. sing-box prefers
+		// an explicit SNI; fall back to Host or Server.
+		sni := p.SNI
+		if sni == "" {
+			if p.Host != "" {
+				sni = p.Host
+			} else {
+				sni = p.Server
+			}
+		}
 		data.Profiles = append(data.Profiles, renderProfile{
 			Tag:         tag,
 			Server:      p.Server,
 			Port:        p.Port,
 			UUID:        p.UUID,
 			Flow:        p.Flow,
-			SNI:         p.SNI,
+			SNI:         sni,
 			Fingerprint: fp,
 			PublicKey:   p.PublicKey,
 			ShortID:     p.ShortID,
+			IsWS:        isWS,
+			IsReality:   isReality,
+			Path:        path,
+			Host:        p.Host,
 		})
 		if !seenServer[p.Server] {
 			data.Servers = append(data.Servers, p.Server)

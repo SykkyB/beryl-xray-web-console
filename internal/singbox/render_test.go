@@ -143,6 +143,70 @@ func TestRender_EscapesQuotesInProfile(t *testing.T) {
 	}
 }
 
+func TestRender_WebSocketTLS(t *testing.T) {
+	p := sampleProfile("a")
+	p.Type = "ws"
+	p.Security = "tls"
+	p.Path = "/ws"
+	p.Host = "origin.example.com"
+	p.PublicKey = ""
+	p.ShortID = ""
+
+	raw, err := Render([]store.Profile{p}, p.ID)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var cfg struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("invalid JSON: %v\n--- output ---\n%s", err, raw)
+	}
+	var vless map[string]any
+	for _, o := range cfg.Outbounds {
+		if o["type"] == "vless" {
+			vless = o
+			break
+		}
+	}
+	if vless == nil {
+		t.Fatalf("no vless outbound")
+	}
+	tls, _ := vless["tls"].(map[string]any)
+	if _, hasReality := tls["reality"]; hasReality {
+		t.Errorf("plain TLS profile should not emit a reality block")
+	}
+	transport, _ := vless["transport"].(map[string]any)
+	if transport == nil {
+		t.Fatalf("ws profile missing transport block")
+	}
+	if transport["type"] != "ws" {
+		t.Errorf("transport type: got %v, want ws", transport["type"])
+	}
+	if transport["path"] != "/ws" {
+		t.Errorf("transport path: got %v, want /ws", transport["path"])
+	}
+	headers, _ := transport["headers"].(map[string]any)
+	if headers["Host"] != "origin.example.com" {
+		t.Errorf("Host header: got %v", headers["Host"])
+	}
+}
+
+func TestRender_TCPRealityKeepsRealityBlock(t *testing.T) {
+	p := sampleProfile("a")
+	raw, err := Render([]store.Profile{p}, p.ID)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := string(raw)
+	if !strings.Contains(out, `"reality"`) {
+		t.Errorf("reality profile missing reality block")
+	}
+	if strings.Contains(out, `"transport"`) {
+		t.Errorf("tcp profile should not emit transport block")
+	}
+}
+
 func TestWriteAndCheck_WritesAtomically(t *testing.T) {
 	dir := t.TempDir()
 	r := &Renderer{ConfigPath: filepath.Join(dir, "config.json")}

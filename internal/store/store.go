@@ -17,7 +17,9 @@ import (
 	"time"
 )
 
-// Profile is one saved VLESS+Reality endpoint.
+// Profile is one saved VLESS endpoint. Defaults: Type="tcp",
+// Security="reality" — keeps profiles imported before the WS / TLS
+// transport split working without migration.
 type Profile struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -27,10 +29,43 @@ type Profile struct {
 	Flow        string    `json:"flow,omitempty"`
 	SNI         string    `json:"sni"`
 	Fingerprint string    `json:"fingerprint,omitempty"`
-	PublicKey   string    `json:"public_key"`
-	ShortID     string    `json:"short_id"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+
+	// Reality fields — required when Security == "reality".
+	PublicKey string `json:"public_key,omitempty"`
+	ShortID   string `json:"short_id,omitempty"`
+
+	// Transport: "tcp" (default) or "ws".
+	// For "ws" the additional fields below come into play.
+	Type string `json:"type,omitempty"`
+
+	// Security: "reality" (default) or "tls".
+	Security string `json:"security,omitempty"`
+
+	// Path is the WebSocket path. "/" if absent. Ignored when Type == "tcp".
+	Path string `json:"path,omitempty"`
+
+	// Host is the WebSocket Host header (a.k.a. ws-host). May differ
+	// from Server when fronting through a CDN. Ignored when Type == "tcp".
+	Host string `json:"host,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// EffectiveType returns Type with the historical default applied.
+func (p Profile) EffectiveType() string {
+	if p.Type == "" {
+		return "tcp"
+	}
+	return p.Type
+}
+
+// EffectiveSecurity returns Security with the historical default applied.
+func (p Profile) EffectiveSecurity() string {
+	if p.Security == "" {
+		return "reality"
+	}
+	return p.Security
 }
 
 // Profiles is the on-disk profile store.

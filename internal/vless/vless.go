@@ -29,6 +29,14 @@ type URL struct {
 	Fingerprint string
 	PublicKey   string
 	ShortID     string
+
+	// Type is the stream transport: "tcp" (default) or "ws".
+	Type string
+	// Security is the TLS layer: "reality" or "tls".
+	Security string
+	// Path / Host populated only when Type == "ws".
+	Path string
+	Host string
 }
 
 // Parse decodes a vless:// URL. Returns an error with a human-readable
@@ -61,39 +69,55 @@ func Parse(s string) (*URL, error) {
 
 	q := u.Query()
 
-	// We only support Reality + plain TCP + no extra encryption today.
-	// Error messages are written long-form because they show up verbatim
-	// in the panel UI when a paste fails — the more obvious it is what
-	// went wrong, the less guessing the user has to do.
-	if sec := q.Get("security"); sec != "" && sec != "reality" {
-		return nil, fmt.Errorf(
-			"this URL uses security=%q, but xray-panel-cli only supports VLESS+Reality. "+
-				"Look for a config with security=reality in the URL.", sec)
+	// Supported combinations:
+	//   transport: "tcp" (default) or "ws"
+	//   security:  "reality" (default) or "tls"
+	// Anything else (gRPC, XHTTP, raw, etc., or "none" / "xtls") is
+	// rejected with a sentence the panel can show verbatim — the more
+	// obvious it is what went wrong, the less guessing for the user.
+	transport := strings.ToLower(strings.TrimSpace(q.Get("type")))
+	if transport == "" {
+		transport = "tcp"
 	}
-	if t := q.Get("type"); t != "" && t != "tcp" {
+	switch transport {
+	case "tcp", "ws":
+	default:
 		return nil, fmt.Errorf(
-			"this URL uses transport type=%q (e.g. WebSocket / gRPC / XHTTP). "+
-				"xray-panel-cli only supports VLESS+Reality+Vision over plain TCP. "+
-				"Look for a config with type=tcp.", t)
-	}
-	if enc := q.Get("encryption"); enc != "" && enc != "none" {
-		return nil, fmt.Errorf(
-			"this URL uses encryption=%q; only encryption=none works with VLESS+Reality.", enc)
+			"this URL uses transport type=%q (e.g. gRPC / XHTTP / raw / kcp). "+
+				"xray-panel-cli supports only TCP and WebSocket transports. "+
+				"Look for a config with type=tcp or type=ws.", transport)
 	}
 
-	// pbk (Reality public key) is the one truly required Reality field —
-	// without it the handshake can't complete.
+	security := strings.ToLower(strings.TrimSpace(q.Get("security")))
+	if security == "" {
+		security = "reality"
+	}
+	switch security {
+	case "reality", "tls":
+	default:
+		return nil, fmt.Errorf(
+			"this URL uses security=%q. xray-panel-cli supports only "+
+				"security=reality (default) or security=tls.", security)
+	}
+
+	if enc := q.Get("encryption"); enc != "" && enc != "none" {
+		return nil, fmt.Errorf(
+			"this URL uses encryption=%q; only encryption=none is allowed.", enc)
+	}
+
+	// pbk (Reality public key) is required only for Reality. With
+	// plain TLS the cert is verified normally by SNI (no extra key).
 	pbk := q.Get("pbk")
-	if pbk == "" {
+	if security == "reality" && pbk == "" {
 		return nil, fmt.Errorf(
 			"missing pbk= (Reality public key). " +
 				"This URL is missing the Reality handshake credentials — " +
 				"xray-panel-cli cannot use it.")
 	}
-	// sid (short id) and sni (server name) are technically optional in
-	// the Reality spec — a server can be configured with an empty
-	// shortIds list and most accept SNI from the URL or from the server
-	// hostname. We let them through and let sing-box decide.
+	// sid (short id) and sni (server name) are optional for Reality.
+	// For plain TLS, sni is needed for cert verification — but most
+	// URLs either include it or fall back to the hostname; we accept
+	// empty here and let sing-box derive it.
 	sid := q.Get("sid")
 	sni := q.Get("sni")
 
@@ -103,6 +127,16 @@ func Parse(s string) (*URL, error) {
 	}
 	if name == "" {
 		name = host
+	}
+
+	// WebSocket fields. Path defaults to "/" if absent (sing-box will
+	// 404 without one). Host header (`host`) is optional — it's the
+	// SNI-style domain to send in the Host: header; needed when the
+	// server is fronted through a CDN.
+	wsPath := q.Get("path")
+	wsHost := q.Get("host")
+	if transport == "ws" && wsPath == "" {
+		wsPath = "/"
 	}
 
 	return &URL{
@@ -115,5 +149,9 @@ func Parse(s string) (*URL, error) {
 		Fingerprint: q.Get("fp"),
 		PublicKey:   pbk,
 		ShortID:     sid,
+		Type:        transport,
+		Security:    security,
+		Path:        wsPath,
+		Host:        wsHost,
 	}, nil
 }

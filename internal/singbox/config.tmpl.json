@@ -56,13 +56,18 @@
         "utls": {
           "enabled": true,
           "fingerprint": {{json $p.Fingerprint}}
-        },
+        }{{if $p.IsReality}},
         "reality": {
           "enabled": true,
           "public_key": {{json $p.PublicKey}},
           "short_id": {{json $p.ShortID}}
-        }
-      }
+        }{{end}}
+      }{{if $p.IsWS}},
+      "transport": {
+        "type": "ws",
+        "path": {{json $p.Path}}{{if $p.Host}},
+        "headers": { "Host": {{json $p.Host}} }{{end}}
+      }{{end}}
     }{{end}},
     {
       "type": "selector",
