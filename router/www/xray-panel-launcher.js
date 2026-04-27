@@ -299,16 +299,50 @@
         setTimeout(function () { finish(false); }, 4000);
     }
 
+    // While our class is on the cell, intercept clicks at capture
+    // phase and open the panel in a new tab instead of letting Vue
+    // navigate to the stock VPN dashboard. Capture + stopImmediate
+    // beats both capture- and bubble-phase listeners that the SPA
+    // attached. When the class is removed, restore native behaviour.
+    function bindCellClick(cell) {
+        if (cell.__xrayClickBound) return;
+        var handler = function (e) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            try { window.open(panelURL(), "_blank", "noopener"); } catch (err) {}
+        };
+        cell.addEventListener("click", handler, true);
+        cell.__xrayClickBound = handler;
+        // Visible affordance — a hand cursor signals "this opens
+        // something" even before the user clicks; the native cell
+        // already navigates within the SPA, so we're not changing
+        // the click-affordance, just the destination.
+        cell.style.cursor = "pointer";
+        cell.title = "Open XRAY sing-box panel";
+    }
+
+    function unbindCellClick(cell) {
+        if (!cell.__xrayClickBound) return;
+        cell.removeEventListener("click", cell.__xrayClickBound, true);
+        delete cell.__xrayClickBound;
+        cell.style.cursor = "";
+        cell.title = "";
+    }
+
     function applyVPNIconState(active) {
         var cell = findVPNServiceCell();
 
         // Stale-cleanup sweep: earlier launcher versions painted the
-        // sidebar VPN entry by mistake. Strip the active class from
-        // anything that isn't our chosen topology cell so users
-        // don't have to reload to clear leftovers.
+        // sidebar VPN entry by mistake. Strip the active class +
+        // unbind any leftover click handler from anything that isn't
+        // our chosen topology cell so users don't have to reload to
+        // clear leftovers.
         var stale = document.querySelectorAll("." + ICON_ACTIVE_CLASS);
         for (var s = 0; s < stale.length; s++) {
-            if (stale[s] !== cell) stale[s].classList.remove(ICON_ACTIVE_CLASS);
+            if (stale[s] !== cell) {
+                stale[s].classList.remove(ICON_ACTIVE_CLASS);
+                unbindCellClick(stale[s]);
+            }
         }
 
         // Debug hook — `xrayLauncher` is queryable from DevTools.
@@ -326,10 +360,12 @@
         var has = cell.classList.contains(ICON_ACTIVE_CLASS);
         if (active && !has) {
             cell.classList.add(ICON_ACTIVE_CLASS);
+            bindCellClick(cell);
             try { console.log("[xray-panel] VPN icon → ACTIVE", cell); } catch (e) {}
         }
         if (!active && has) {
             cell.classList.remove(ICON_ACTIVE_CLASS);
+            unbindCellClick(cell);
             try { console.log("[xray-panel] VPN icon → inactive", cell); } catch (e) {}
         }
     }
