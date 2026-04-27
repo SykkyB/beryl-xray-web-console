@@ -37,6 +37,10 @@ PATHS=(
     /etc/hotplug.d/button/50-sing-box-switch
     /etc/xray-panel-cli
     /etc/sysctl.d/99-disable-mptcp.conf
+    # GL.iNet UI launcher integration
+    /www/xray-panel-launcher.js
+    /www/gl_home.html
+    /www/gl_home.html.bak
 )
 
 GIT_REV="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
