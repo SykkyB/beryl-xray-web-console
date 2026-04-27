@@ -86,10 +86,25 @@ cp /tmp/xray-panel-launcher.js    /www/xray-panel-launcher.js
 chmod 0644                        /www/xray-panel-launcher.js
 if [ -f /www/gl_home.html ]; then
 	[ -f /www/gl_home.html.bak ] || cp /www/gl_home.html /www/gl_home.html.bak
+	# Cache-bust the script tag with a content-derived query-string so
+	# the browser pulls each new launcher.js without needing a manual
+	# Cmd+Shift+R. Without this, GL.iNet's nginx serves the script with
+	# heuristic caching and a stale version sticks until the user
+	# explicitly invalidates — invisible to anyone who doesn't know the
+	# integration is there. md5sum is in busybox; first 10 hex chars
+	# is more than enough collision-wise for "did the file change".
+	LAUNCHER_HASH="$(md5sum /www/xray-panel-launcher.js | cut -c1-10)"
 	if ! grep -q xray-panel-launcher /www/gl_home.html; then
-		# Insert before </body>; busybox sed doesn't grok newlines in
-		# replacements, so the script tag goes inline on the same line.
-		sed -i 's|</body>|<script src="/xray-panel-launcher.js" defer></script></body>|' \
+		# First insertion: drop the tag with the hash query right
+		# before </body>. busybox sed doesn't grok newlines in the
+		# replacement, so the tag goes inline on the same line.
+		sed -i "s|</body>|<script src=\"/xray-panel-launcher.js?v=${LAUNCHER_HASH}\" defer></script></body>|" \
+			/www/gl_home.html
+	else
+		# Re-patch: replace whatever existing src=... value (with or
+		# without ?v=…) by the new hashed one, so subsequent installs
+		# always advance the cache key.
+		sed -i "s|src=\"/xray-panel-launcher.js[^\"]*\"|src=\"/xray-panel-launcher.js?v=${LAUNCHER_HASH}\"|" \
 			/www/gl_home.html
 	fi
 fi
