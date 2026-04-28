@@ -500,6 +500,46 @@ go run ./cmd/vless-vet -in samples/raw.txt -workers 128 \
 go run ./cmd/vless-vet -in samples/raw.txt -skip-tls
 ```
 
+### Источники: локальный файл, URL или preset (`-in` / `-url` / `-source`)
+
+Можно скармливать на вход не только локальный файл — флаги `-source`
+(преднастроенные публичные списки) и `-url` (произвольные URL'ы)
+позволяют качать ленты прямо из утилиты. Любая комбинация флагов
+**склеивается перед парсингом**:
+
+```sh
+# полный список kort0881 (clean/vless.txt — все регионы)
+go run ./cmd/vless-vet -source kort0881
+
+# только RU-SNI подсет (ru-sni/vless.txt — серверы с RU-доменами в SNI)
+go run ./cmd/vless-vet -source kort0881-ru
+
+# обе ленты разом
+go run ./cmd/vless-vet -source kort0881-all
+# то же через запятую: -source kort0881,kort0881-ru
+
+# произвольный URL (например своя гист-лента)
+go run ./cmd/vless-vet -url https://example.com/my-list.txt
+
+# смешать локальный файл с удалённым источником
+go run ./cmd/vless-vet -in samples/private.txt -source kort0881-ru
+
+# тонкая настройка фетча
+go run ./cmd/vless-vet -source kort0881 -fetch-timeout 60s
+```
+
+Известные preset'ы (вывод `-h` показывает свежий список):
+
+| Preset | URL |
+|---|---|
+| `kort0881` | `…/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt` |
+| `kort0881-ru` | `…/main/githubmirror/ru-sni/vless.txt` |
+| `kort0881-all` | оба сразу |
+
+Когда `-out` не задан, выходной файл получает имя на основе **primary
+source**: `kort0881.alive.txt` для preset'ов, `<in>.alive<ext>` для
+локального файла, `vless-vet.alive.txt` для ad-hoc URL.
+
 ### Фильтр по группам (`-only`)
 
 Через запятую перечисляешь, какие бакеты записать в выходной файл.

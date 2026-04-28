@@ -35,7 +35,18 @@
 //	-deep -singbox /usr/local/bin/sing-box   # custom binary path
 //	-deep -deep-workers 8 -deep-timeout 12s
 //
-// Defaults output path = INPUT with ".alive" inserted before the ext.
+// Sources besides a local file can be fetched over HTTP. Either pass
+// raw URLs or use a named preset:
+//
+//	-source kort0881                    # full kort0881 list (clean/vless.txt)
+//	-source kort0881-ru                 # RU-SNI subset (ru-sni/vless_ru.txt)
+//	-source kort0881,kort0881-ru        # both, concatenated
+//	-url https://example.com/list.txt   # any raw URL
+//	-in local.txt -url https://…        # combine local + remote
+//
+// Defaults output path = INPUT with ".alive" inserted before the ext;
+// when no -in is given, output falls back to <source>.alive.txt in the
+// current directory (or "vless-vet.alive.txt" for ad-hoc URL fetches).
 package main
 
 import (
@@ -43,7 +54,9 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
 	"net"
+	nethttp "net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,10 +80,44 @@ var preferredOrder = []string{
 	"ws+reality",
 }
 
+// sourcePresets maps shorthand names to the URLs they expand into.
+// Adding a new public list = one entry here; the rest of the pipeline
+// already handles arbitrary URLs via -url. Names are lowercase by
+// convention so -source flag values stay forgiving.
+var sourcePresets = map[string][]string{
+	// kort0881/vpn-vless-configs-russia layout (verified against the
+	// repo's GitHub-API listing on 2026-04-28):
+	//   githubmirror/clean/vless.txt    — full mirror, every region
+	//   githubmirror/ru-sni/vless.txt   — RU-SNI subset (servers
+	//                                     whose advertised SNI is a
+	//                                     RU domain, useful for less
+	//                                     conspicuous outbound)
+	"kort0881":     {"https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt"},
+	"kort0881-ru":  {"https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/ru-sni/vless.txt"},
+	"kort0881-all": {
+		"https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt",
+		"https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/ru-sni/vless.txt",
+	},
+}
+
+// presetNamesSorted is just for the -source flag's help text so users
+// see a deterministic listing.
+func presetNamesSorted() []string {
+	names := make([]string, 0, len(sourcePresets))
+	for k := range sourcePresets {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func main() {
 	var (
-		inPath     = flag.String("in", "", "input file with vless:// URLs (one per line)")
-		outPath    = flag.String("out", "", "output file (default: <in>.alive<ext>)")
+		inPath     = flag.String("in", "", "input file with vless:// URLs (one per line; combine with -source/-url to mix local + remote)")
+		sourceArg  = flag.String("source", "", "comma-separated preset name(s): "+strings.Join(presetNamesSorted(), ", "))
+		urlArg     = flag.String("url", "", "comma-separated raw URL(s) to fetch (one or more public lists)")
+		fetchTO    = flag.Duration("fetch-timeout", 30*time.Second, "per-URL HTTP fetch timeout")
+		outPath    = flag.String("out", "", "output file (default: <in>.alive<ext>, or <source>.alive.txt for remote-only)")
 		workers    = flag.Int("workers", 64, "concurrent probes")
 		tcpTimeout = flag.Duration("tcp-timeout", 3*time.Second, "TCP connect timeout")
 		tlsTimeout = flag.Duration("tls-timeout", 4*time.Second, "TLS handshake timeout")
@@ -84,13 +131,14 @@ func main() {
 	)
 	flag.Parse()
 
-	if *inPath == "" {
-		fmt.Fprintln(os.Stderr, "missing -in <file>")
+	sources, err := resolveSources(*inPath, *sourceArg, *urlArg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		flag.Usage()
 		os.Exit(2)
 	}
 	if *outPath == "" {
-		*outPath = defaultOutputPath(*inPath)
+		*outPath = defaultOutputPathFor(*inPath, sources)
 	}
 
 	filter, err := parseOnly(*only)
@@ -114,7 +162,13 @@ func main() {
 	}
 
 	// ── stage 1: read + parse, filter to compatible URLs ──────────────
-	urls, parseStats, err := readAndParse(*inPath)
+	r, closeAll, err := openSources(sources, *fetchTO)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer closeAll()
+	urls, parseStats, err := readAndParse(r)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -167,6 +221,149 @@ func defaultOutputPath(in string) string {
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
 	return filepath.Join(dir, stem+".alive"+ext)
+}
+
+// defaultOutputPathFor picks an output filename based on what the user
+// supplied. Local-file input wins (".alive" inserted before the ext);
+// otherwise the first preset name shapes the filename so a remote-only
+// run lands at e.g. kort0881.alive.txt next to the binary.
+func defaultOutputPathFor(in string, sources []sourceSpec) string {
+	if in != "" {
+		return defaultOutputPath(in)
+	}
+	for _, s := range sources {
+		if s.preset != "" {
+			return s.preset + ".alive.txt"
+		}
+	}
+	return "vless-vet.alive.txt"
+}
+
+// ── input sources ─────────────────────────────────────────────────────
+
+// sourceSpec describes one input — local file or remote URL — that
+// will be parsed for vless:// lines. preset is the shorthand that
+// expanded into this URL (empty when the URL was passed via -url).
+type sourceSpec struct {
+	kind   string // "file" | "url"
+	path   string // file path (kind=file) or URL (kind=url)
+	preset string // preset name when expanded from -source, else ""
+}
+
+func (s sourceSpec) label() string {
+	if s.preset != "" {
+		return s.preset + " (" + s.path + ")"
+	}
+	return s.path
+}
+
+// resolveSources turns the three input flags into an ordered list of
+// sources to read+concatenate. Empty result + nil error is impossible —
+// returns an error if no input was supplied.
+func resolveSources(inPath, sourceArg, urlArg string) ([]sourceSpec, error) {
+	var out []sourceSpec
+	if inPath != "" {
+		out = append(out, sourceSpec{kind: "file", path: inPath})
+	}
+	for _, name := range splitCSV(sourceArg) {
+		urls, ok := sourcePresets[strings.ToLower(name)]
+		if !ok {
+			return nil, fmt.Errorf("-source %q: unknown preset (known: %s)",
+				name, strings.Join(presetNamesSorted(), ", "))
+		}
+		for _, u := range urls {
+			out = append(out, sourceSpec{kind: "url", path: u, preset: strings.ToLower(name)})
+		}
+	}
+	for _, u := range splitCSV(urlArg) {
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			return nil, fmt.Errorf("-url %q: must start with http:// or https://", u)
+		}
+		out = append(out, sourceSpec{kind: "url", path: u})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no input — pass at least one of -in <file>, -source <name>, or -url <url>")
+	}
+	return out, nil
+}
+
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// openSources opens every spec, returning a single Reader that streams
+// the concatenated content. closeAll releases every underlying reader
+// (file handles + HTTP bodies). Each spec is reported on stderr so the
+// user sees what's being pulled, especially for -source presets.
+func openSources(specs []sourceSpec, fetchTO time.Duration) (io.Reader, func(), error) {
+	readers := make([]io.Reader, 0, 2*len(specs))
+	closers := make([]io.Closer, 0, len(specs))
+	cleanup := func() {
+		for _, c := range closers {
+			_ = c.Close()
+		}
+	}
+
+	for _, s := range specs {
+		switch s.kind {
+		case "file":
+			fmt.Printf("input: file %s\n", s.path)
+			f, err := os.Open(s.path)
+			if err != nil {
+				cleanup()
+				return nil, func() {}, fmt.Errorf("open %s: %w", s.path, err)
+			}
+			closers = append(closers, f)
+			readers = append(readers, f)
+
+		case "url":
+			fmt.Printf("input: %s\n", s.label())
+			body, err := fetchURL(s.path, fetchTO)
+			if err != nil {
+				cleanup()
+				return nil, func() {}, fmt.Errorf("fetch %s: %w", s.path, err)
+			}
+			closers = append(closers, body)
+			readers = append(readers, body)
+		}
+		// Force a newline between sources so a file that doesn't end in
+		// "\n" can't accidentally splice its last line with the next
+		// source's first one.
+		readers = append(readers, strings.NewReader("\n"))
+	}
+	return io.MultiReader(readers...), cleanup, nil
+}
+
+// fetchURL does a vanilla GET with a hard timeout and a friendly UA.
+// Returns the response body for streaming — caller must Close it.
+func fetchURL(u string, timeout time.Duration) (io.ReadCloser, error) {
+	client := &nethttp.Client{Timeout: timeout}
+	req, err := nethttp.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "vless-vet/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("http %d %s", resp.StatusCode, resp.Status)
+	}
+	return resp.Body, nil
 }
 
 // ── -only filter ──────────────────────────────────────────────────────
@@ -266,16 +463,13 @@ func (e *entry) bucket() string {
 	return e.Transport + "+" + e.Security
 }
 
-func readAndParse(path string) ([]*entry, *parseStats, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer f.Close()
-
+// readAndParse consumes vless:// lines from any io.Reader (file,
+// concatenated remote bodies, or whatever openSources hands us) and
+// returns the entries that survived the parser, plus a stats roll-up.
+func readAndParse(in io.Reader) ([]*entry, *parseStats, error) {
 	st := &parseStats{reasons: map[string]int{}}
 	var entries []*entry
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
