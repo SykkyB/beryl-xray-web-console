@@ -96,6 +96,16 @@
 
             renderBlock(cell("service"), s.service, (v) =>
                 v ? { cls: "pill-ok", text: "running" } : { cls: "pill-bad", text: "stopped" });
+
+            // Rerender the profile list when running flips, so the
+            // active row's button switches between Stop (running) and
+            // Activate (stopped). Skip on first load (lastRunning =
+            // null) since fetchProfiles fires from init() anyway.
+            const newRunning = !!(s.service && s.service.ok && s.service.value);
+            if (lastRunning !== null && lastRunning !== newRunning) {
+                fetchProfiles();
+            }
+            lastRunning = newRunning;
             renderBlock(cell("tun"), s.tun, (v) =>
                 v ? { cls: "pill-ok", text: "up" } : { cls: "pill-bad", text: "down" });
             renderBlock(cell("enabled"), s.enabled, (v) =>
@@ -220,7 +230,11 @@
                         <div class="profile-meta">${escapeHTML(p.server)}:${p.port} · uuid ${escapeHTML(p.uuid_mask)}${p.flow ? " · flow " + escapeHTML(p.flow) : ""}${p.path ? " · path " + escapeHTML(p.path) : ""}</div>
                     </div>
                     <div class="profile-actions">
-                        ${p.active ? "" : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`}
+                        ${p.active
+                            ? (lastRunning
+                                ? `<button class="btn-action btn-danger"  data-act="stop"     data-id="${escapeHTML(p.id)}">Stop</button>`
+                                : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`)
+                            : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`}
                         <button class="btn-action" data-act="test" data-id="${escapeHTML(p.id)}">Test</button>
                         <button class="btn-action" data-act="edit" data-id="${escapeHTML(p.id)}">Edit</button>
                         ${p.active ? "" : `<button class="btn-action btn-danger"  data-act="delete"   data-id="${escapeHTML(p.id)}">Delete</button>`}
@@ -260,6 +274,12 @@
     // We cache the last result per profile so reopening the panel
     // doesn't blank out previous timings. Cleared on full page reload.
     const latencyCache = {};   // id → { ok, delayMs, error, at }
+
+    // Last sing-box running state seen via fetchState. Drives the
+    // active-profile row's button: when running we show "Stop"; when
+    // stopped we show "Activate" so the user can resume the same
+    // profile without first hunting for a Start button elsewhere.
+    let lastRunning = null;
 
     function renderPingPill(r) {
         if (r.ok) {
@@ -338,7 +358,13 @@
         }
         await setBusy(btn, async () => {
             try {
-                if (act === "activate") {
+                if (act === "stop") {
+                    // Mirrors the Stop button in the Sing-box card —
+                    // tearing the tunnel down via the active-profile
+                    // row is the natural inverse of Activate.
+                    await postJSON("/api/service", { action: "stop" });
+                    setActionResult("sing-box stopped", true);
+                } else if (act === "activate") {
                     const data = await postJSON("/api/profiles/" + encodeURIComponent(id) + "/activate", {});
                     const note =
                         data.switched       ? " (instant switch)" :
