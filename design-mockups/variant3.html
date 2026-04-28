@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>v3 — hero status, 3-column controls</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+    /* v3 — hero status strip moved INSIDE the card body (bigger pills,
+       grouped, easy to scan). Controls below in 3 equal columns:
+       Actions | Bind | Killswitch. Killswitch gets equal real-estate so
+       it doesn't feel like an afterthought. */
+    .v3-hero {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 10px;
+        background: var(--bg-elev);
+        border: 1px solid var(--border-soft);
+        border-radius: 6px;
+        padding: 12px 14px;
+    }
+    .v3-hero .item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .v3-hero .label { color: var(--text-muted); text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+    .v3-hero .value { font-size: 14px; font-weight: 600; color: var(--text); }
+
+    .v3-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+    }
+    @media (max-width: 760px) { .v3-grid { grid-template-columns: 1fr; } }
+
+    .v3-grid .svc-cell { min-height: 168px; }
+    .v3-grid .action-col button { width: 100%; }
+
+    .toggle-stack { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+    .toggle-stack .big-toggle {
+        font-size: 14px;
+        padding: 12px 18px;
+        text-align: center;
+        border-radius: 8px;
+        font-weight: 600;
+    }
+</style>
+</head>
+<body>
+<div class="page">
+    <header class="page-head">
+        <div>
+            <h1>XRAY sing-box Client</h1>
+            <div class="sub">VPN client console for GL.iNet Beryl</div>
+        </div>
+        <div class="meta">v3 · hero status, 3-col controls</div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+        <button role="tab" aria-selected="true"  data-tab="control">Control</button>
+        <button role="tab" aria-selected="false" data-tab="monitor">Monitor</button>
+    </nav>
+
+    <section data-pane="control">
+
+        <div class="card">
+            <div class="card-head"><h2>Sing-box</h2></div>
+            <div class="card-body">
+
+                <div class="v3-hero">
+                    <div class="item"><span class="label">Process</span><span class="value"><span class="pill pill-ok">running</span></span></div>
+                    <div class="item"><span class="label">TUN</span><span class="value"><span class="pill pill-ok">up</span></span></div>
+                    <div class="item"><span class="label">Boot</span><span class="value"><span class="pill pill-ok">enabled</span></span></div>
+                    <div class="item"><span class="label">Side switch</span><span class="value"><span class="pill pill-ok">ON</span></span></div>
+                    <div class="item"><span class="label">Active profile</span><span class="value"><span class="pill pill-active">Ax3000-Beryl</span></span></div>
+                </div>
+
+                <div class="v3-grid">
+                    <div class="svc-cell">
+                        <h3>Manual</h3>
+                        <div class="action-col">
+                            <button class="btn-primary">Start</button>
+                            <button>Stop</button>
+                            <button>Restart</button>
+                            <button>Reload</button>
+                        </div>
+                    </div>
+
+                    <div class="svc-cell">
+                        <h3>Auto-follow physical switch</h3>
+                        <div class="toggle-stack">
+                            <button class="btn-toggle big-toggle" data-state="on">ON</button>
+                            <p class="hint">Side switch <em>ON</em>. Service follows the hardware mode switch.</p>
+                        </div>
+                    </div>
+
+                    <div class="svc-cell">
+                        <h3>Killswitch</h3>
+                        <div class="toggle-stack">
+                            <button class="btn-toggle big-toggle" data-state="off">OFF</button>
+                            <p class="hint">When tunnel goes down, LAN traffic is blackholed instead of falling back to direct WAN.</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-head">
+                <h2>Profiles</h2>
+                <div class="status-row">
+                    <span class="status-item"><span class="label">Exit IP</span><span class="pill pill-ok">176.221.192.204</span></span>
+                </div>
+            </div>
+            <div class="card-body">
+
+                <div class="action-row">
+                    <button>Test all</button>
+                    <span class="right"></span>
+                    <button class="btn-primary">+ Add VLESS profile</button>
+                </div>
+
+                <ul class="profile-list">
+                    <li class="profile-row is-active">
+                        <div class="profile-meta">
+                            <div class="profile-name">Ax3000-Beryl <span class="pill pill-active" style="margin-left:6px;">ACTIVE</span> <span class="pill pill-ok" style="margin-left:4px;">189 ms</span></div>
+                            <div class="profile-info">vpn.sys-lab.xyz:9443 · uuid 11406a7a…c909c36 · flow xtls-rprx-vision</div>
+                        </div>
+                        <div class="profile-actions">
+                            <button>Test</button>
+                            <button>Edit</button>
+                        </div>
+                    </li>
+                    <li class="profile-row">
+                        <div class="profile-meta">
+                            <div class="profile-name">Ax3000-Beryl-FailOver1 <span class="pill pill-ok" style="margin-left:6px;">175 ms</span></div>
+                            <div class="profile-info">vpn.sys-lab.xyz:9443 · uuid f62f2e29…7faefe9 · flow xtls-rprx-vision</div>
+                        </div>
+                        <div class="profile-actions">
+                            <button class="btn-primary">Activate</button>
+                            <button>Test</button>
+                            <button>Edit</button>
+                            <button>Delete</button>
+                        </div>
+                    </li>
+                    <li class="profile-row">
+                        <div class="profile-meta">
+                            <div class="profile-name">hamedp71::🇩🇪 <span class="pill pill-ok" style="margin-left:6px;">163 ms</span></div>
+                            <div class="profile-info">138.124.186.80:443 · uuid e346f220…2b3b625 · flow xtls-rprx-vision</div>
+                        </div>
+                        <div class="profile-actions">
+                            <button class="btn-primary">Activate</button>
+                            <button>Test</button>
+                            <button>Edit</button>
+                            <button>Delete</button>
+                        </div>
+                    </li>
+                </ul>
+
+                <p class="hint"><strong>Activate</strong> writes config + reloads sing-box. If sing-box is stopped and Auto-follow is OFF, Activate also starts the service. With Auto-follow ON, Activate just selects the profile.</p>
+
+            </div>
+        </div>
+
+    </section>
+
+    <section data-pane="monitor" hidden>
+
+        <div class="card">
+            <div class="card-head">
+                <h2>Live</h2>
+                <div class="status-row">
+                    <span class="status-item"><span class="label">Up</span><span class="pill pill-ok">69 B/s</span></span>
+                    <span class="status-item"><span class="label">Down</span><span class="pill pill-ok">82 B/s</span></span>
+                    <span class="status-item"><span class="label">Active</span><span class="pill pill-ok">3</span></span>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="hint">↑ 2.88 MB ↓ 227 KB · total since sing-box start</p>
+                <div class="kv-table">
+                    <div class="h">Host / Destination</div><div class="h">Network</div><div class="h" style="text-align:right">Up</div><div class="h" style="text-align:right">Down</div>
+                    <div>192.168.100.1:445</div><div class="muted">tcp</div><div style="text-align:right">3.37 KB</div><div style="text-align:right">5.14 KB</div>
+                    <div>immich.sys-lab.xyz<br><span class="muted">192.168.100.5:8443</span></div><div class="muted">tcp</div><div style="text-align:right">2.80 KB</div><div style="text-align:right">2.34 KB</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-head"><h2>Logs</h2><div class="status-row"><span class="muted" style="font-size:12px;">auto-scroll · live stream</span></div></div>
+            <div class="card-body">
+                <div class="log">+0400 2026-04-27 21:06:03 INFO [3192288774 0ms] inbound/tun[tun-in]: inbound connection to 149.154.175.100:443
++0400 2026-04-27 21:06:03 INFO [882496851  4ms] outbound/vless[vless-f21a0830bd2f]: outbound connection to 149.154.175.100:80</div>
+            </div>
+        </div>
+
+    </section>
+</div>
+
+<script>
+    document.querySelectorAll(".tabs button").forEach(function (b) {
+        b.addEventListener("click", function () {
+            document.querySelectorAll(".tabs button").forEach(function (x) {
+                x.setAttribute("aria-selected", x === b ? "true" : "false");
+            });
+            document.querySelectorAll("section[data-pane]").forEach(function (s) {
+                s.hidden = (s.getAttribute("data-pane") !== b.getAttribute("data-tab"));
+            });
+        });
+    });
+    document.querySelectorAll(".btn-toggle").forEach(function (t) {
+        t.addEventListener("click", function () {
+            var on = t.getAttribute("data-state") === "on";
+            t.setAttribute("data-state", on ? "off" : "on");
+            t.textContent = on ? "OFF" : "ON";
+        });
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>xray-panel-cli — design mockups</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+    .picker {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+    }
+    .picker a {
+        display: block;
+        padding: 16px 18px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text);
+        text-decoration: none;
+        box-shadow: var(--shadow);
+    }
+    .picker a:hover { border-color: var(--accent); }
+    .picker h2 { margin: 0 0 6px; font-size: 16px; }
+    .picker .meta { font-size: 12.5px; color: var(--text-dim); }
+    .picker ul { margin: 8px 0 0 18px; padding: 0; font-size: 12.5px; color: var(--text-dim); }
+    .picker ul li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+    <header class="page-head">
+        <div>
+            <h1>Design mockups</h1>
+            <div class="sub">Three layouts for the xray-panel-cli rework — pick one, we apply it for real.</div>
+        </div>
+    </header>
+
+    <div class="picker">
+        <a href="variant1.html">
+            <h2>v1 · Stacked actions, prominent bind</h2>
+            <div class="meta">Two equal columns; killswitch is a slim row below.</div>
+            <ul>
+                <li>Buttons stacked vertically (left)</li>
+                <li>Big bind-toggle (right)</li>
+                <li>Killswitch as a thin divider row</li>
+                <li>Calmest, most "mobile-shaped"</li>
+            </ul>
+        </a>
+        <a href="variant2.html">
+            <h2>v2 · Compact horizontal, inline killswitch</h2>
+            <div class="meta">Wide-left action row, small bind aside; killswitch as inline strip.</div>
+            <ul>
+                <li>Action buttons in a single row (compact)</li>
+                <li>Bind toggle as a slim sidebar block</li>
+                <li>Killswitch stripe with label + state + toggle</li>
+                <li>Tightest vertically</li>
+            </ul>
+        </a>
+        <a href="variant3.html">
+            <h2>v3 · Hero status, 3-column controls</h2>
+            <div class="meta">Big status strip up top, then Actions / Bind / Killswitch as equals.</div>
+            <ul>
+                <li>Hero status row inside the card body</li>
+                <li>Three equal columns: actions, bind, killswitch</li>
+                <li>Active profile pill in hero (not header)</li>
+                <li>Most "dashboard"-looking</li>
+            </ul>
+        </a>
+    </div>
+
+    <p class="hint" style="margin-top:24px;">
+        All three share the same Profiles card (Exit IP in header, Activate also starts the service when Auto-follow is OFF), the same Tabs structure (<em>Control</em> / <em>Monitor</em>), and the same palette. Differences are limited to the Sing-box card layout. Open each in a new tab to flip side-by-side.
+    </p>
+</div>
+</body>
+</html>

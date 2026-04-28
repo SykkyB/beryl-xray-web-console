@@ -527,6 +527,8 @@ func (s *Server) handleProfileActivate(w nethttp.ResponseWriter, r *nethttp.Requ
 	running, _ := s.Probe.SingBoxRunning(ctx)
 	switched := false
 	reloaded := false
+	started := false
+	pendingSwitch := false
 
 	if running {
 		// Try the cheap path first — clash-API selector switch. Works
@@ -556,15 +558,43 @@ func (s *Server) handleProfileActivate(w nethttp.ResponseWriter, r *nethttp.Requ
 			_ = closeClashConnections(ctx, s.Cfg.ClashAPI)
 			reloaded = true
 		}
+	} else {
+		// sing-box stopped. The user clicked Activate hoping it would
+		// just work, so try to start it — but only when it's safe:
+		//
+		//   bind=off                 → start unconditionally
+		//   bind=on,  phys=on        → start (the bind-gate would let
+		//                              a manual Start through anyway)
+		//   bind=on,  phys=off       → DO NOT start; that combination
+		//                              means "service is bound to the
+		//                              hardware switch, currently OFF"
+		//                              — auto-starting would surprise
+		//                              the user. Just persist the new
+		//                              config and tell the UI the
+		//                              switch flip will pick it up.
+		bindOn, _ := s.UCI.GetBool(ctx, "sing-box.config.bind_switch")
+		phys, _ := s.Probe.SwitchPosition(ctx)
+		gateBlocked := bindOn && phys == "off"
+		if gateBlocked {
+			pendingSwitch = true
+		} else {
+			if err := s.Service.Do(ctx, service.ActionStart); err != nil {
+				writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("start: %w", err))
+				return
+			}
+			started = true
+		}
 	}
 
 	s.nudgeExitIP()
 
 	writeJSON(w, nethttp.StatusOK, map[string]any{
-		"ok":           true,
-		"active_id":    id,
-		"profile_name": prof.Name,
-		"switched":     switched, // true = instant clash-API selector flip
-		"reloaded":     reloaded, // true = full sing-box reload (slower)
+		"ok":             true,
+		"active_id":      id,
+		"profile_name":   prof.Name,
+		"switched":       switched,       // true = instant clash-API selector flip
+		"reloaded":       reloaded,       // true = full sing-box reload (slower)
+		"started":        started,        // true = sing-box was stopped, now started
+		"pending_switch": pendingSwitch,  // true = bind=on + phys=off, will start on flip
 	})
 }

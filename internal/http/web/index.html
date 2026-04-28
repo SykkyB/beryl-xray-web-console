@@ -25,166 +25,185 @@
     </header>
 
     <main>
-        <!-- Sing-box service (incl. physical-switch bind) -->
-        <section class="card" data-card="service">
-            <div class="card-head">
-                <h2>Sing-box</h2>
-                <div class="status-row">
-                    <span class="status-item">
-                        <span class="status-label">Process</span>
-                        <span data-key="service" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">TUN</span>
-                        <span data-key="tun" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">Boot</span>
-                        <span data-key="enabled" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">Side switch</span>
-                        <span data-key="physical_switch" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">Active profile</span>
-                        <span data-key="active_profile" class="pill pill-muted">…</span>
-                    </span>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="action-row" data-row="manual">
-                    <button class="btn-action" data-action="start">Start</button>
-                    <button class="btn-action" data-action="stop">Stop</button>
-                    <button class="btn-action" data-action="restart">Restart</button>
-                    <button class="btn-action" data-action="reload">Reload</button>
-                </div>
-                <p class="hint" data-hint="manual">Start, stop, or hot-reload the sing-box VPN client. <em>Reload</em> validates the config and re-applies it without losing the tunnel for long.</p>
+        <nav class="tabs" role="tablist">
+            <button role="tab" aria-selected="true"  data-tab="control">Control</button>
+            <button role="tab" aria-selected="false" data-tab="monitor">Monitor</button>
+        </nav>
 
-                <div class="bind-row">
-                    <label class="bind-toggle-label">
-                        <span>Auto-follow physical switch</span>
-                        <button class="btn-toggle" data-toggle="bind_switch" data-state="off">…</button>
-                    </label>
-                    <p class="hint" data-hint="bind">When on, sing-box follows the GL.iNet hardware mode switch on the side of the router (ON = start, OFF = stop), and the manual buttons above are gated on the switch position. Acts like the native WG / OVPN binding.</p>
+        <!-- ─── Control pane: Sing-box service + Profiles ──────────────── -->
+        <section data-pane="control">
+
+            <!-- Sing-box service (incl. physical-switch bind + killswitch) -->
+            <section class="card" data-card="service">
+                <div class="card-head">
+                    <h2>Sing-box</h2>
+                    <div class="status-row">
+                        <span class="status-item">
+                            <span class="status-label">Process</span>
+                            <span data-key="service" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">TUN</span>
+                            <span data-key="tun" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Boot</span>
+                            <span data-key="enabled" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Side switch</span>
+                            <span data-key="physical_switch" class="pill pill-muted">…</span>
+                        </span>
+                    </div>
                 </div>
-            </div>
-        </section>
+                <div class="card-body">
 
-        <!-- Profiles -->
-        <section class="card" data-card="profiles">
-            <div class="card-head">
-                <h2>Profiles</h2>
-            </div>
-            <div class="card-body">
-                <div class="profile-toolbar">
-                    <button id="test-all" class="btn-action" type="button">Test all</button>
-                </div>
+                    <div class="svc-grid">
+                        <div class="svc-cell">
+                            <h3>Manual control</h3>
+                            <div class="action-row" data-row="manual">
+                                <button class="btn-action" data-action="start">Start</button>
+                                <button class="btn-action" data-action="stop">Stop</button>
+                                <button class="btn-action" data-action="restart">Restart</button>
+                                <button class="btn-action" data-action="reload">Reload</button>
+                            </div>
+                            <p class="hint" data-hint="manual">Start, stop, or hot-reload the sing-box VPN client. <em>Reload</em> validates the config and re-applies it without losing the tunnel for long.</p>
+                        </div>
 
-                <ul id="profile-list" class="profile-list">
-                    <li class="profile-empty muted">Loading…</li>
-                </ul>
-
-                <details class="profile-add">
-                    <summary>Add VLESS profile</summary>
-                    <div class="profile-form">
-                        <label class="lbl-block" for="vless-url">VLESS URL</label>
-                        <textarea id="vless-url" rows="3" placeholder="vless://UUID@host:port?security=reality&amp;…#Name"></textarea>
-                        <label class="lbl-block" for="vless-name">Optional name override</label>
-                        <input type="text" id="vless-name" placeholder="leave blank to use the URL's #fragment">
-                        <div class="action-row">
-                            <button id="vless-import" class="btn-action btn-primary">Import</button>
+                        <div class="svc-cell">
+                            <h3>Bind</h3>
+                            <div class="bind-aside">
+                                <label class="bind-toggle-line">
+                                    <span>Auto-follow</span>
+                                    <button class="btn-toggle" data-toggle="bind_switch" data-state="off">…</button>
+                                </label>
+                                <p class="hint" data-hint="bind">When on, sing-box follows the GL.iNet hardware mode switch on the side of the router (ON = start, OFF = stop). Acts like the native WG / OVPN binding.</p>
+                            </div>
                         </div>
                     </div>
-                </details>
 
-                <p class="hint">Activating a profile rewrites <code>/etc/sing-box/config.json</code>, validates it, and reloads sing-box if it's running. The active profile survives reboots (UCI <code>sing-box.config.active_profile</code>).</p>
-            </div>
+                    <div class="killswitch-strip">
+                        <span class="pill pill-muted ks-pill">Killswitch</span>
+                        <div class="ks-text">
+                            <strong data-key="killswitch_label">…</strong>
+                            — when the tunnel goes down, LAN traffic is blackholed instead of falling back to the direct WAN. Off by default — same behavior as GL.iNet's stock WG / OVPN clients.
+                        </div>
+                        <button class="btn-toggle" data-toggle="killswitch" data-state="off">…</button>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- Profiles -->
+            <section class="card" data-card="profiles">
+                <div class="card-head">
+                    <h2>Profiles</h2>
+                    <div class="status-row">
+                        <span class="status-item">
+                            <span class="status-label">Active</span>
+                            <span data-key="active_profile" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Exit IP</span>
+                            <span data-key="profiles_exit_ip" class="pill pill-muted">…</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="profile-toolbar">
+                        <button id="test-all" class="btn-action" type="button">Test all</button>
+                    </div>
+
+                    <ul id="profile-list" class="profile-list">
+                        <li class="profile-empty muted">Loading…</li>
+                    </ul>
+
+                    <details class="profile-add">
+                        <summary>Add VLESS profile</summary>
+                        <div class="profile-form">
+                            <label class="lbl-block" for="vless-url">VLESS URL</label>
+                            <textarea id="vless-url" rows="3" placeholder="vless://UUID@host:port?security=reality&amp;…#Name"></textarea>
+                            <label class="lbl-block" for="vless-name">Optional name override</label>
+                            <input type="text" id="vless-name" placeholder="leave blank to use the URL's #fragment">
+                            <div class="action-row">
+                                <button id="vless-import" class="btn-action btn-primary">Import</button>
+                            </div>
+                        </div>
+                    </details>
+
+                    <p class="hint"><em>Activate</em> rewrites <code>/etc/sing-box/config.json</code> and reloads sing-box if it's running. With <em>Auto-follow</em> off and the service stopped, Activate also starts it; with Auto-follow on, it just selects the profile — service starts when you flip the side switch ON. The active profile survives reboots.</p>
+                </div>
+            </section>
+
         </section>
 
-        <!-- Killswitch -->
-        <section class="card" data-card="killswitch">
-            <div class="card-head">
-                <h2>Killswitch</h2>
-                <div class="status-row">
-                    <span class="status-item">
-                        <span class="status-label">State</span>
-                        <span data-key="killswitch" class="pill pill-muted">…</span>
-                    </span>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="action-row">
-                    <button class="btn-toggle" data-toggle="killswitch" data-state="off">…</button>
-                </div>
-                <p class="hint">When the tunnel goes down, LAN traffic is blackholed instead of falling back to the direct WAN. Off by default — same behavior as GL.iNet's stock WG / OVPN clients.</p>
-            </div>
-        </section>
+        <!-- ─── Monitor pane: Live + Logs ─────────────────────────────── -->
+        <section data-pane="monitor" hidden>
 
-        <!-- Live -->
-        <section class="card" data-card="live">
-            <div class="card-head">
-                <h2>Live</h2>
-                <div class="status-row">
-                    <span class="status-item">
-                        <span class="status-label">Exit IP</span>
-                        <span data-key="live_exit_ip" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">Up rate</span>
-                        <span data-key="live_up_rate" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">Down rate</span>
-                        <span data-key="live_down_rate" class="pill pill-muted">…</span>
-                    </span>
-                    <span class="status-item">
-                        <span class="status-label">Active</span>
-                        <span data-key="live_conn_count" class="pill pill-muted">…</span>
-                    </span>
+            <section class="card" data-card="live">
+                <div class="card-head">
+                    <h2>Live</h2>
+                    <div class="status-row">
+                        <span class="status-item">
+                            <span class="status-label">Exit IP</span>
+                            <span data-key="live_exit_ip" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Up rate</span>
+                            <span data-key="live_up_rate" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Down rate</span>
+                            <span data-key="live_down_rate" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Active</span>
+                            <span data-key="live_conn_count" class="pill pill-muted">…</span>
+                        </span>
+                    </div>
                 </div>
-            </div>
-            <div class="card-body">
-                <div class="totals-row muted" id="live-totals">— total since start</div>
+                <div class="card-body">
+                    <div class="totals-row muted" id="live-totals">— total since start</div>
 
-                <table class="flow-table" id="flow-table">
-                    <thead>
-                        <tr>
-                            <th>Host / destination</th>
-                            <th>Net</th>
-                            <th class="num">Up</th>
-                            <th class="num">Down</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr><td colspan="4" class="muted">Loading…</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- Logs -->
-        <section class="card" data-card="logs">
-            <div class="card-head">
-                <h2>Logs</h2>
-                <div class="status-row">
-                    <span class="status-item">
-                        <label class="toggle-inline">
-                            <input type="checkbox" id="log-autoscroll" checked>
-                            <span>Auto-scroll</span>
-                        </label>
-                    </span>
-                    <span class="status-item">
-                        <label class="toggle-inline">
-                            <input type="checkbox" id="log-autorefresh" checked>
-                            <span>Live stream</span>
-                        </label>
-                    </span>
+                    <table class="flow-table" id="flow-table">
+                        <thead>
+                            <tr>
+                                <th>Host / destination</th>
+                                <th>Net</th>
+                                <th class="num">Up</th>
+                                <th class="num">Down</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="4" class="muted">Loading…</td></tr>
+                        </tbody>
+                    </table>
                 </div>
-            </div>
-            <div class="card-body">
-                <pre id="log-view" class="log-view">Loading logs…</pre>
-            </div>
+            </section>
+
+            <section class="card" data-card="logs">
+                <div class="card-head">
+                    <h2>Logs</h2>
+                    <div class="status-row">
+                        <span class="status-item">
+                            <label class="toggle-inline">
+                                <input type="checkbox" id="log-autoscroll" checked>
+                                <span>Auto-scroll</span>
+                            </label>
+                        </span>
+                        <span class="status-item">
+                            <label class="toggle-inline">
+                                <input type="checkbox" id="log-autorefresh" checked>
+                                <span>Live stream</span>
+                            </label>
+                        </span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <pre id="log-view" class="log-view">Loading logs…</pre>
+                </div>
+            </section>
+
         </section>
 
         <p id="action-result" class="action-result"></p>

@@ -104,8 +104,12 @@
             renderBlock(cell("active_profile"), s.active_profile, (v) =>
                 v && v.name ? { cls: "pill-ok", text: v.name } : { cls: "pill-muted", text: "none" });
 
-            renderBlock(cell("killswitch"), s.killswitch, (v) =>
-                v ? { cls: "pill-ok", text: "ON" } : { cls: "pill-muted", text: "OFF" });
+            // killswitch_label is the inline text inside the
+            // killswitch strip ("On" / "Off") — pairs with the toggle
+            // button so the descriptive sentence reads naturally.
+            const ksOn = !!(s.killswitch && s.killswitch.ok && s.killswitch.value);
+            const ksLabel = document.querySelector('[data-key="killswitch_label"]');
+            if (ksLabel) ksLabel.textContent = ksOn ? "On" : "Off";
 
             renderBlock(cell("physical_switch"), s.physical_switch, (v) =>
                 v === "on"  ? { cls: "pill-ok",    text: "ON" } :
@@ -336,9 +340,14 @@
             try {
                 if (act === "activate") {
                     const data = await postJSON("/api/profiles/" + encodeURIComponent(id) + "/activate", {});
-                    const note = data.switched ? " (instant switch)" :
-                                 data.reloaded ? " (reloaded)" : " (will start on next Start)";
-                    setActionResult(`Profile "${data.profile_name}" activated${note}`, true);
+                    const note =
+                        data.switched       ? " (instant switch)" :
+                        data.reloaded       ? " (reloaded)"        :
+                        data.started        ? " (started)"         :
+                        data.pending_switch ? " (will start when the side switch flips ON)" :
+                                              " (will start on next Start)";
+                    setActionResult(`Profile "${data.profile_name}" activated${note}`,
+                                    !data.pending_switch);
                     // The latency pill from any prior test is now stale —
                     // it was measured against a different selector default.
                     // Drop it and re-test in the background so the user
@@ -478,8 +487,15 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             const s = await r.json();
 
-            // Exit IP
+            // Exit IP — surfaced in two places: the Live card header
+            // (Monitor tab) and the Profiles card header (Control tab).
+            // Both reflect the same poller value; the duplicate keeps
+            // the relevant pill visible whichever tab is active.
             renderBlock(cell("live_exit_ip"), s.exit_ip, (v) => {
+                if (!v || !v.ip) return { cls: "pill-muted", text: "—" };
+                return { cls: "pill-ok", text: v.ip };
+            });
+            renderBlock(cell("profiles_exit_ip"), s.exit_ip, (v) => {
                 if (!v || !v.ip) return { cls: "pill-muted", text: "—" };
                 return { cls: "pill-ok", text: v.ip };
             });
@@ -609,6 +625,20 @@
         $("#profile-list").addEventListener("click", (e) => {
             const btn = e.target.closest("button[data-act]");
             if (btn) profileAction(btn);
+        });
+
+        // Tab switcher — Control / Monitor. Hidden panes still get
+        // their data refreshed in the background so switching tabs
+        // is instant; cheap polls won't pile up on a slow router.
+        document.querySelectorAll(".tabs button[data-tab]").forEach((tab) => {
+            tab.addEventListener("click", () => {
+                document.querySelectorAll(".tabs button[data-tab]").forEach((t) => {
+                    t.setAttribute("aria-selected", t === tab ? "true" : "false");
+                });
+                document.querySelectorAll("section[data-pane]").forEach((s) => {
+                    s.hidden = (s.getAttribute("data-pane") !== tab.getAttribute("data-tab"));
+                });
+            });
         });
 
         fetchState();
