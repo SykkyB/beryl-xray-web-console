@@ -121,3 +121,22 @@ tar xzf "$DEST" -O tmp/backup-manifest.txt 2>/dev/null
 echo
 echo "--- First entries ---"
 tar tzf "$DEST" | head -25
+
+# Off-site mirror to Cloudflare R2.
+# Uses the rclone profile `r2` from ~/.config/rclone/rclone.conf.
+# If rclone or the profile is missing, skip silently with a notice — the
+# local snapshot is still on disk.
+R2_REMOTE="r2:sys-lab-home-backups/beryl-snapshots"
+if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q '^r2:'; then
+    echo
+    echo ">>> Uploading to $R2_REMOTE/"
+    if rclone copy --s3-no-head "$DEST" "$R2_REMOTE/"; then
+        echo ">>> R2 upload OK"
+    else
+        echo ">>> R2 upload FAILED — local snapshot still at $DEST" >&2
+    fi
+else
+    echo
+    echo ">>> rclone or [r2] profile not found, skipping R2 mirror"
+    echo ">>> (install: brew install rclone; configure profile per ~/.r2-creds.env)"
+fi
