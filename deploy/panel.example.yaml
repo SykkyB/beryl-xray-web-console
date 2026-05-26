@@ -30,3 +30,18 @@ auth:
   # If you also run the flint2 panel, you can paste the same hash to
   # share credentials between the two consoles.
   password_bcrypt: "$2a$12$REPLACE_ME_WITH_A_REAL_BCRYPT_HASH_XXXXXXXXXXXXXXXXXXXXX"
+
+# /www/xray-panel-launcher.js (injected into the GL.iNet stock admin UI)
+# reads this on every page load via GET /api/launcher-config and gates
+# its DOM mutations accordingly. Switching modes = edit + restart panel.
+#
+#   legacy    — sidebar entry + home-page topology icon recolor (safe default).
+#   dashboard — legacy + an XRAY tunnel card injected into the stock
+#               VPN Dashboard (profile picker + ON/OFF toggle). Killswitch
+#               toggle still lives on this panel at :9092.
+#   full      — not implemented yet; falls back to dashboard.
+#
+# Rollback to legacy if anything renders badly: change to "legacy" here,
+# `/etc/init.d/xray-panel-cli restart`, refresh the browser.
+injection:
+  mode: legacy

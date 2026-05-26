@@ -60,6 +60,9 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("GET /api/ping", s.handlePing)
 	mux.HandleFunc("GET /api/state", s.handleState)
 	mux.HandleFunc("POST /api/service", s.handleServiceAction)
+	mux.HandleFunc("POST /api/native-vpn/stop", s.handleNativeVPNStop)
+	mux.HandleFunc("POST /api/native-vpn/restore", s.handleNativeVPNRestore)
+	mux.HandleFunc("POST /api/side-switch", s.handleSideSwitch)
 	mux.HandleFunc("POST /api/killswitch", s.handleKillswitch)
 	mux.HandleFunc("POST /api/bind_switch", s.handleBindSwitch)
 	mux.HandleFunc("GET /api/profiles", s.handleProfilesList)
@@ -74,18 +77,34 @@ func (s *Server) Handler() nethttp.Handler {
 	registerUIRoutes(mux)
 	authed := BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
 
-	// /api/up.png is a "is sing-box tunnelling right now" probe used
-	// by the GL.iNet stock home-page launcher. Cross-origin <img>
-	// loads can't carry basic-auth without first triggering a browser
-	// password prompt, so this one route bypasses auth. Leaks only
+	// /api/up.png — "is sing-box tunnelling right now" probe used by
+	// the GL.iNet stock home-page launcher. Cross-origin <img> loads
+	// can't carry basic-auth without first triggering a browser
+	// password prompt, so this route bypasses auth. Leaks only
 	// "tunnel up/down" — already inferable from any external request.
-	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+	//
+	// /api/launcher-config — read by the same launcher at every page
+	// load to learn which dashboard injections are enabled. Mode
+	// string is no more sensitive than panel.yaml itself (and the
+	// launcher file is world-readable at /www/ anyway).
+	dispatch := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method == nethttp.MethodGet && r.URL.Path == "/api/up.png" {
 			s.handleUpPing(w, r)
 			return
 		}
+		if r.Method == nethttp.MethodGet && r.URL.Path == "/api/launcher-config" {
+			s.handleLauncherConfig(w, r)
+			return
+		}
 		authed.ServeHTTP(w, r)
 	})
+
+	// Wrap everything in CORS so cross-origin XHR from the GL.iNet
+	// admin UI (http://<lan-ip>) can reach :9092 with credentials.
+	// Preflight (OPTIONS) is answered inside the middleware before
+	// auth runs — required by browsers, which won't send creds on
+	// preflight.
+	return corsLAN(dispatch)
 }
 
 type pingResponse struct {

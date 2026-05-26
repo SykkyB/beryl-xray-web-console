@@ -269,10 +269,14 @@ open http://192.168.200.1:9092/                 # веб-панель
 | Метод | Путь | Что делает |
 |---|---|---|
 | GET  | `/api/ping` | health-check (под basic-auth) |
-| GET  | `/api/state` | агрегированный статус (sing-box, tun, switch, killswitch, bind_switch, enabled, active_profile) |
+| GET  | `/api/state` | агрегированный статус (sing-box, tun, switch, killswitch, bind_switch, enabled, active_profile, sw_func, native_vpn_active) |
 | POST | `/api/service` | `{action: start\|stop\|restart\|reload}` |
 | POST | `/api/killswitch` | `{on: bool}` |
-| POST | `/api/bind_switch` | `{on: bool}` |
+| POST | `/api/bind_switch` | `{on: bool}` (legacy; новый код использует `/api/side-switch`) |
+| POST | `/api/side-switch` | `{on: bool}` — Phase 4: транзакционный своп native↔XRAY + бинд физ. переключателя |
+| POST | `/api/native-vpn/stop` | дизейблит активные WG/OVPN-правила в `route_policy`, рестартит `vpn-client`, сохраняет список для restore |
+| POST | `/api/native-vpn/restore` | возвращает ранее дизейбленные правила, рестартит `vpn-client` |
+| GET  | `/api/launcher-config` | публичный (без auth) — отдаёт `{mode}` для launcher.js на стоковом UI |
 | GET  | `/api/profiles` | список профилей + active_id |
 | POST | `/api/profiles/import-vless` | `{url, name?}` — парсит и сохраняет |
 | DELETE | `/api/profiles/{id}` | удалить (отказ если активный) |
@@ -280,13 +284,31 @@ open http://192.168.200.1:9092/                 # веб-панель
 | GET  | `/api/live` | exit IP, traffic rates, top flows |
 | GET  | `/api/logs?lines=N` | tail sing-box.log (default 100, max 1000) |
 
-Под капотом — `/api/state` и `/api/live` имеют 1.5с-кеш с single-flight, чтобы N браузерных вкладок не множили нагрузку.
+Под капотом — `/api/state` (3с) и `/api/live` (1.5с) имеют кеш с single-flight, чтобы N браузерных вкладок не множили нагрузку.
+
+CORS: все `/api/*` отдают `Access-Control-Allow-Credentials: true` только для RFC1918 / loopback Origin'ов, чтобы launcher на `http://192.168.200.1/` мог дёргать панель на `:9092` cross-origin (см. [internal/http/cors.go](internal/http/cors.go)).
 
 ### Ресурсы
 
 - ~6 МБ дисковое место (статичный бинарник)
-- ~12 МБ RAM (RSS) при работе
+- ~17 МБ RAM (RSS) при работе (Go-runtime, sing-box доп. 20-40 МБ когда запущен)
 - Peak CPU 5–15% на пиках при нескольких вкладках; 1–3% средняя
+
+### Интеграция со стоковым GL.iNet VPN Dashboard (Phase 2-4)
+
+Помимо отдельной панели на `:9092`, `xray-panel-cli` отдаёт `xray-panel-launcher.js` который инжектится в стоковый GL.iNet UI (`/www/gl_home.html`). Launcher добавляет к стоковому Vue-SPA на `#/vpndashboard`:
+
+- **XRAY карточку** рядом со стоковыми WireGuard/OpenVPN — в едином визуальном стиле
+- **ON/OFF тоггл** в стиле `gl-switch` (с собственным overlay-текстом, т.к. Vue-state не пробросить)
+- **Профиль-пикер** (drawer с радио-группой профилей VLESS)
+- **Kill Switch** тег — клик → POST `/api/killswitch`
+- **Side switch селектор** — широкий gl-switch-style тоггл с лейблами «WireGuard VPN» ↔ «XRAY VPN», транзакционный своп (стопает native, поднимает XRAY, биндит физ-кнопку; обратно — симметрично)
+- **View Log** drawer — tail `/var/log/sing-box.log`
+- Connected-state строки: Server / Port / Traffic / Virtual IP / Exit IP
+
+Режим инъекции переключается в `/etc/xray-panel-cli/panel.yaml` (`injection.mode: dashboard | legacy | full`).
+
+Полная техническая раскладка — в [HANDOFF-DASHBOARD-INTEGRATION.md](HANDOFF-DASHBOARD-INTEGRATION.md).
 
 ---
 
@@ -675,20 +697,36 @@ DONE in 47s — kept 11/30 (tcp_ok=30 tls_ok=28 vless_ok=11) → samples/raw.ali
 - [x] Идемпотентный init (start/stop/restart/reload)
 - [x] Снос устаревших пакетов (`v2raya`, `xray-core`)
 
-### Phase 2 — веб-консоль
+### Phase 2 — веб-консоль (отдельная панель на :9092)
 - [x] **2A.** Скелет: Go single-binary, embed UI, bcrypt basic-auth, LAN-bind guard, procd init, deploy-script, `/api/ping`
 - [x] **2B.** Service API: `/api/state`, `/api/service`, `/api/killswitch`, `/api/bind_switch`. UI с тумблерами, кнопками, auto-refresh.
 - [x] **2C.** Профили: парсинг `vless://` URL, CRUD, активация → пересборка `config.json` → reload + clash close. UI с импортом/удалением/активацией.
 - [x] **2D.** Live data + логи: `/api/live` (exit IP через фоновый поллер, traffic rate, top flows через clash-API), `/api/logs` (tail). UI карточки Live и Logs.
-- [ ] **2E.** Multi-outbound `selector` / `urltest` для real-time fail-over без рестарта sing-box
-- [ ] **2F.** Стиль GL.iNet UI (шрифты/палитра/иконки из их прошивки) + интеграция через iframe / поддомен / floating button
 
-### Phase 3 — TODO
-- [ ] Симметричный апдейт для серверной стороны (`flint2-xray-web-console`): обновление до того же уровня панели
+### Phase 3 — интеграция с GL.iNet stock VPN Dashboard — done
+- [x] Launcher.js инжектится в `/www/gl_home.html` (cache-busted hash)
+- [x] XRAY карточка на `#/vpndashboard` рядом со стоковой WG/OVPN
+- [x] Клик на ON/OFF тоггл → `/api/service start|stop`
+- [x] Killswitch тег с inline-кликом → `/api/killswitch`
+- [x] Profile-picker drawer с радио-группой (свой DOM, не Element-UI)
+- [x] Forward mutex: XRAY ON стопает native через `/api/native-vpn/stop`, XRAY OFF восстанавливает через `/api/native-vpn/restore`
+- [x] Connected-state extras (Server / Port / Traffic / Virtual IP / Exit IP) + View Log drawer
+
+### Phase 4 — Side switch + транзакционный своп — done
+- [x] Side switch селектор (широкий gl-switch с лейблами "WireGuard VPN" / "XRAY VPN") рядом с Kill Switch
+- [x] `POST /api/side-switch {on:bool}`: своп `switch-button.@main[0].func` `vpn` ↔ `xray`, бинд физ-кнопки к sing-box, синхронизация с текущей позицией переключателя
+- [x] Симметричный mutex: ON стопает native (если запущен) перед стартом XRAY, OFF стопает XRAY и восстанавливает native — переключение в любую сторону оставляет систему в согласованном состоянии
+- [x] Stock UCI ключ `switch-button.@main[0].func='xray'` обрабатывается нашим hotplug; стоковый `/etc/rc.button/switch` пытается выполнить несуществующий `/etc/gl-switch.d/xray.sh` → no-op без `mcu_send_message` нотификации
+- [x] Backup-скрипт включает `/etc/config/switch-button` — состояние Phase 4 переживает rebuild прошивки
+
+### Phase 5 — TODO
+- [ ] Симметричный апдейт для серверной стороны (`flint2-xray-web-console`)
+- [ ] Multi-outbound `selector` / `urltest` для real-time fail-over без рестарта sing-box
 - [ ] WebSocket-стрим логов (вместо REST polling)
 - [ ] Latency-test через clash-API в UI
 - [ ] Edit/rename профилей (сейчас только Add/Activate/Delete)
 - [ ] Опциональный i18n (английский по умолчанию, русский opt-in)
+- [ ] Сплит launcher.js (~1950 строк) на модули (core / dashboard / drawer / log / side-switch)
 
 ---
 

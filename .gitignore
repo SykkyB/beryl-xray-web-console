@@ -29,3 +29,9 @@ deploy/panel.local.yaml
 
 # Router-state backups (contain VLESS UUIDs and bcrypt hashes)
 /backups/
+
+# Reverse-engineering artefacts of GL.iNet's stock SPA — bundles +
+# DOM snapshots. Their JS is GL.iNet's, not ours to redistribute.
+# RECON.md is OUR analysis notes and stays tracked.
+router/recon/spa/
+router/recon/dom/

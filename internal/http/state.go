@@ -11,14 +11,16 @@ import (
 // "ok" flag and an optional "error" string so a partial failure (e.g.
 // uci hung but pgrep worked) still gives the UI something to render.
 type stateResponse struct {
-	Service        block  `json:"service"`
-	TUN            block  `json:"tun"`
-	PhysicalSwitch block  `json:"physical_switch"`
-	Killswitch     block  `json:"killswitch"`
-	BindSwitch     block  `json:"bind_switch"`
-	Enabled        block  `json:"enabled"`
-	ActiveProfile  block  `json:"active_profile"`
-	GeneratedAt    string `json:"generated_at"`
+	Service         block  `json:"service"`
+	TUN             block  `json:"tun"`
+	PhysicalSwitch  block  `json:"physical_switch"`
+	Killswitch      block  `json:"killswitch"`
+	BindSwitch      block  `json:"bind_switch"`
+	Enabled         block  `json:"enabled"`
+	ActiveProfile   block  `json:"active_profile"`
+	NativeVPNActive block  `json:"native_vpn_active"`
+	SwFunc          block  `json:"sw_func"`
+	GeneratedAt     string `json:"generated_at"`
 }
 
 type block struct {
@@ -106,7 +108,7 @@ func (s *Server) collectState(ctx context.Context) stateResponse {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(7)
+	wg.Add(9)
 
 	go func() {
 		defer wg.Done()
@@ -159,6 +161,31 @@ func (s *Server) collectState(ctx context.Context) stateResponse {
 			resp.Enabled = block{Error: err.Error()}
 		} else {
 			resp.Enabled = block{OK: true, Value: v}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		// switch-button.@main[0].func — the GL.iNet UCI key that
+		// names the physical-toggle binding. "" / missing = no
+		// binding. "xray" = our marker (set via /api/sw-func).
+		// Native values: vpn, wireguard, openvpn, tor, adguardhome,
+		// wifi, repeater, cellular, led.
+		v, err := s.UCI.Get(ctx, "switch-button.@main[0].func")
+		if err != nil {
+			resp.SwFunc = block{Error: err.Error()}
+		} else {
+			resp.SwFunc = block{OK: true, Value: v}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		active, err := s.Probe.NativeVPNActive(ctx)
+		if err != nil {
+			resp.NativeVPNActive = block{Error: err.Error()}
+		} else {
+			resp.NativeVPNActive = block{OK: true, Value: active}
 		}
 	}()
 

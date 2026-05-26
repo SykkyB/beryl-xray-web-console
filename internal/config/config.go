@@ -55,6 +55,40 @@ type Config struct {
 	ExitIPURL string `yaml:"exit_ip_url,omitempty"`
 
 	Auth AuthConfig `yaml:"auth"`
+
+	Injection InjectionConfig `yaml:"injection,omitempty"`
+}
+
+// InjectionConfig controls how much of the GL.iNet stock admin UI the
+// `/www/xray-panel-launcher.js` script tries to mutate. Read by the
+// launcher via the public `/api/launcher-config` endpoint at page load
+// so flipping modes is a panel-restart away — no JS redeploy needed.
+type InjectionConfig struct {
+	// Mode chooses which DOM injections are active:
+	//
+	//   legacy    — sidebar entry + home-page topology icon recolor.
+	//               Default; matches behaviour from before the dashboard
+	//               integration was added.
+	//   dashboard — legacy + an XRAY tunnel card on the stock
+	//               VPN Dashboard page (with profile picker and ON/OFF
+	//               toggle). Killswitch toggle still lives on :9092.
+	//   full      — dashboard + settings drawer + btnsettings dropdown
+	//               (not implemented yet — falls back to dashboard).
+	//
+	// Empty defaults to "legacy" so an install on a stock router never
+	// silently turns on more than the user expects.
+	Mode string `yaml:"mode,omitempty"`
+}
+
+// InjectionMode returns the normalised injection mode, defaulting to
+// "legacy" when the config field is empty or unknown.
+func (c *Config) InjectionMode() string {
+	switch c.Injection.Mode {
+	case "dashboard", "full":
+		return c.Injection.Mode
+	default:
+		return "legacy"
+	}
 }
 
 // AuthConfig is the basic-auth credential pair. The password is stored as

@@ -1,25 +1,41 @@
 #!/bin/sh
 # /etc/hotplug.d/button/50-sing-box-switch
 # Bind sing-box VPN client to the GL.iNet physical mode switch.
-# Active only when sing-box.config.bind_switch=1 AND the GL.iNet switch-button
-# is not already bound to a known native function (wireguard/openvpn/etc.).
+#
+# Two signals indicate "we own the switch":
+#   1. switch-button.@main[0].func == "xray"   (set via the launcher's
+#      btnsettings injection — Phase 4 path; matches stock GL.iNet
+#      semantics for native VPN clients)
+#   2. sing-box.config.bind_switch == 1        (legacy path; kept so
+#      a rollback to launcher injection.mode=legacy keeps working)
+#
+# If sw_func names a native function (wireguard / openvpn / etc.),
+# we always yield even if our own bind_switch happens to be 1 —
+# don't compete for a button the user explicitly gave to something else.
 
 [ "$BUTTON" = "switch" ] || exit 0
 
 . /lib/functions.sh
 config_load 'sing-box'
 config_get_bool bind_switch config bind_switch 0
-[ "$bind_switch" = "1" ] || exit 0
 
 sw_func=$(uci -q get switch-button.@main[0].func 2>/dev/null)
+
 case "$sw_func" in
-	wireguard|openvpn|tor|adguardhome|wifi|repeater|cellular)
-		logger -t sing-box-switch "skip: switch-button bound to '$sw_func'"
+	xray)
+		# Explicitly ours — proceed regardless of bind_switch.
+		;;
+	wireguard|openvpn|tor|adguardhome|wifi|repeater|cellular|vpn|led)
+		logger -t sing-box-switch "skip: switch-button bound to native '$sw_func'"
 		exit 0
+		;;
+	*)
+		# Unset / unknown — fall back to legacy bind_switch flag.
+		[ "$bind_switch" = "1" ] || exit 0
 		;;
 esac
 
-logger -t sing-box-switch "physical switch action=$ACTION"
+logger -t sing-box-switch "physical switch action=$ACTION (sw_func=$sw_func bind_switch=$bind_switch)"
 
 case "$ACTION" in
 	pressed)

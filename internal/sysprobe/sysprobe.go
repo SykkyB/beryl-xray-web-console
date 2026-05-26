@@ -80,6 +80,43 @@ func (p *Probe) TunUp(ctx context.Context, ifname string) (bool, error) {
 	return strings.Contains(s, ",UP,") || strings.Contains(s, "<UP,") || strings.Contains(s, ",LOWER_UP"), nil
 }
 
+// NativeVPNActive returns true if any GL.iNet stock VPN tunnel
+// (WireGuard wgclient*, OpenVPN ovpnclient*) currently has a live
+// network interface. Used by the dashboard launcher to detect that
+// the user has enabled a native client out-of-band, so it can stop
+// sing-box to enforce mutual exclusion the other direction (XRAY
+// already stops native via /api/native-vpn/stop on its own ON).
+//
+// We probe `ip -o link show` once and scan for known iface name
+// prefixes. Cheap; runs alongside the other probes inside collectState.
+func (p *Probe) NativeVPNActive(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, p.timeout())
+	defer cancel()
+	out, _, err := p.runner().Run(ctx, "ip", "-o", "link", "show")
+	if err != nil {
+		return false, err
+	}
+	s := string(out)
+	// Stock GL.iNet names: wgclient1, wgclient2, …, ovpnclient1, …
+	// Tor's iface is "tun0" but Tor isn't a stock-client we collide
+	// with (it's a separate UI). Skip it.
+	for _, prefix := range []string{"wgclient", "ovpnclient"} {
+		// Lines look like: "18: wgclient1: <POINTOPOINT,…,UP,…> ..."
+		// We need the iface name in the second column.
+		for _, line := range strings.Split(s, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			name := strings.TrimSuffix(fields[1], ":")
+			if strings.HasPrefix(name, prefix) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // SwitchPosition reads the GL.iNet physical mode switch via gl_util.sh.
 // Returns "on", "off", or "unknown" (e.g. when the helper is absent).
 func (p *Probe) SwitchPosition(ctx context.Context) (string, error) {

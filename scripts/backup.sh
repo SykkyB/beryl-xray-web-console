@@ -32,6 +32,11 @@ PATHS=(
     /usr/bin/xray-panel-cli
     /etc/sing-box
     /etc/config/sing-box
+    # GL.iNet's physical-switch binding — Side switch (Phase 4) writes
+    # @main[0].func='xray' here. Restoring this preserves whether the
+    # switch was claimed by us at backup time; otherwise a restore would
+    # leave bind_switch=1 in sing-box but func='vpn' here → inconsistent.
+    /etc/config/switch-button
     /etc/init.d/sing-box
     /etc/init.d/xray-panel-cli
     /etc/hotplug.d/button/50-sing-box-switch

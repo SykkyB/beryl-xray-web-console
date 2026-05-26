@@ -60,15 +60,26 @@ apply_killswitch_state() {
 }
 
 start_service() {
-	local enabled bind_sw sw_status
+	local enabled bind_sw sw_func sw_status bound
 	enabled=$(uci_get_bool enabled 1)
 	[ "$enabled" = "0" ] && return 1
 
+	# Two signals that the physical toggle is bound to us:
+	#   1. UCI switch-button.@main[0].func == "xray"
+	#      (set by the dashboard launcher's btnsettings injection)
+	#   2. Legacy: UCI sing-box.config.bind_switch == 1
+	#      (predates Phase 4; kept so rollback to launcher mode=legacy
+	#      preserves prior behaviour without UCI migration)
 	bind_sw=$(uci_get_bool bind_switch 0)
-	if [ "$bind_sw" = "1" ] && [ -r /lib/functions/gl_util.sh ]; then
+	sw_func=$(uci -q get switch-button.@main[0].func 2>/dev/null)
+	bound=0
+	[ "$sw_func" = "xray" ] && bound=1
+	[ "$bind_sw" = "1" ] && bound=1
+
+	if [ "$bound" = "1" ] && [ -r /lib/functions/gl_util.sh ]; then
 		sw_status=$(. /lib/functions/gl_util.sh; get_switch_button_status 2>/dev/null)
 		[ "$sw_status" = "off" ] && {
-			logger -t sing-box "bind_switch=1 and physical switch is OFF — not starting"
+			logger -t sing-box "bound to physical switch and it is OFF — not starting"
 			return 1
 		}
 	fi
