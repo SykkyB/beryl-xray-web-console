@@ -98,8 +98,13 @@ type Options struct {
 	SingBoxBin   string        // sing-box binary path (used iff Deep)
 	DeepWorkers  int           // concurrent deep probes (default 4)
 	DeepTimeout  time.Duration // per-probe timeout (default 10s)
-	MaxDeep      int           // cap deep-probe candidates after TLS (0 = no cap)
-	HardTimeout  time.Duration // total wall-clock budget; 0 = no cap
+	MaxDeep      int           // global cap on deep candidates (0 = no cap)
+	// MaxPerCountry caps how many TLS-passers each country contributes
+	// to the deep stage. Round-robin selection across countries then
+	// fills up to MaxDeep, so a single popular region can't dominate
+	// the budget. 0 = no per-country cap. Default in the panel: 30.
+	MaxPerCountry int
+	HardTimeout   time.Duration // total wall-clock budget; 0 = no cap
 
 	// DedupByAddr collapses entries with the same Server:Port to one
 	// representative (the first encountered). Public lists are full of

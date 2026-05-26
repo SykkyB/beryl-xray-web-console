@@ -115,11 +115,12 @@ func (s *Server) handleScanStart(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	var body struct {
-		SourceIDs    []string `json:"source_ids"`
-		Deep         bool     `json:"deep"`
-		MaxDeep      int      `json:"max_deep"`
-		HardTimeoutS int      `json:"hard_timeout_s"`
-		SkipActive   bool     `json:"skip_active"` // pause active sing-box for the scan
+		SourceIDs     []string `json:"source_ids"`
+		Deep          bool     `json:"deep"`
+		MaxDeep       int      `json:"max_deep"`
+		MaxPerCountry int      `json:"max_per_country"`
+		HardTimeoutS  int      `json:"hard_timeout_s"`
+		SkipActive    bool     `json:"skip_active"` // pause active sing-box for the scan
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, nethttp.StatusBadRequest, fmt.Errorf("parse body: %w", err))
@@ -166,6 +167,10 @@ func (s *Server) handleScanStart(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if maxDeep == 0 && body.Deep {
 		maxDeep = 200
 	}
+	maxPerCountry := body.MaxPerCountry
+	if maxPerCountry == 0 && body.Deep {
+		maxPerCountry = 30 // fair-share default, ~7 countries fills 200
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	state := &scanState{
@@ -175,16 +180,17 @@ func (s *Server) handleScanStart(w nethttp.ResponseWriter, r *nethttp.Request) {
 		cancel:    cancel,
 		SourceIDs: idsOf(picked),
 		Options: vetlib.Options{
-			Workers:     32, // conservative on 2-core Beryl
-			TCPTimeout:  2 * time.Second,
-			TLSTimeout:  4 * time.Second,
-			Deep:        body.Deep,
-			DeepWorkers: 3,
-			DeepTimeout: 10 * time.Second,
-			MaxDeep:     maxDeep,
-			HardTimeout: hard,
-			DedupByAddr: true,
-			SingBoxBin:  s.Cfg.SingBoxBin,
+			Workers:       32, // conservative on 2-core Beryl
+			TCPTimeout:    2 * time.Second,
+			TLSTimeout:    4 * time.Second,
+			Deep:          body.Deep,
+			DeepWorkers:   3,
+			DeepTimeout:   10 * time.Second,
+			MaxDeep:       maxDeep,
+			MaxPerCountry: maxPerCountry,
+			HardTimeout:   hard,
+			DedupByAddr:   true,
+			SingBoxBin:    s.Cfg.SingBoxBin,
 		},
 	}
 	s.ScanRegistry.put(state)

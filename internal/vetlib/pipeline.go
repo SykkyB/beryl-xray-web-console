@@ -108,10 +108,11 @@ func Run(ctx context.Context, opts Options, progress chan<- Progress) (*Result, 
 	// ── stage 3: deep ─────────────────────────────────────────────
 	deepSt := &DeepStats{}
 	if opts.Deep {
-		// Filter TLS-passers, sort by fastest TLS handshake, cap to
-		// MaxDeep. The stage is slow (~10s per probe on 4 workers),
-		// so 500 TLS-OK candidates would be 20+ minutes uncapped.
-		todo := pickDeepCandidates(entries, opts.MaxDeep)
+		// Pick TLS-passers fairly across countries: per-country cap
+		// first, then round-robin until global MaxDeep is reached.
+		// Prevents one popular region from sweeping the budget while
+		// still finishing in bounded time.
+		todo := pickDeepCandidates(entries, opts.MaxDeep, opts.MaxPerCountry)
 		deepSt = DeepProbe(runCtx, todo, opts.SingBoxBin, opts.DeepWorkers, opts.DeepTimeout, progress)
 	}
 
@@ -136,30 +137,86 @@ func Run(ctx context.Context, opts Options, progress chan<- Progress) (*Result, 
 }
 
 // pickDeepCandidates returns the subset of entries that should be
-// passed to DeepProbe: TLS-passers only, sorted by fastest TLS
-// handshake, capped at max (0 = no cap). Entries themselves are NOT
-// mutated; the returned slice is a new selection.
-func pickDeepCandidates(entries []*Entry, max int) []*Entry {
-	tlsPassers := make([]*Entry, 0, len(entries))
+// passed to DeepProbe: TLS-passers picked fairly across countries.
+//
+// Strategy:
+//  1. Group by country (Entry.Country, "" = unknown).
+//  2. Within each country, sort ascending by TLSMs (fastest first).
+//  3. Apply perCountryCap (0 = no cap).
+//  4. Round-robin across countries (1 from each in turn) until the
+//     global max is reached or all buckets are drained.
+//
+// This way, a country with 500 fast TLS-passers can't sweep all 200
+// global slots — every represented country gets at least one shot at
+// deep verification.
+//
+// Country bucket order is deterministic (alphabetic by ISO code with
+// "" sorted last) so the same input always produces the same picks —
+// makes the report reproducible run-to-run.
+func pickDeepCandidates(entries []*Entry, maxGlobal, perCountryCap int) []*Entry {
+	// Group + sort within each country.
+	byCC := map[string][]*Entry{}
 	for _, e := range entries {
 		if e.TLSOK {
-			tlsPassers = append(tlsPassers, e)
+			byCC[e.Country] = append(byCC[e.Country], e)
 		}
 	}
-	sort.SliceStable(tlsPassers, func(i, j int) bool {
-		ai, aj := tlsPassers[i].TLSMs, tlsPassers[j].TLSMs
-		if ai == 0 {
-			ai = 1 << 30
+	for cc := range byCC {
+		es := byCC[cc]
+		sort.SliceStable(es, func(i, j int) bool {
+			ai, aj := es[i].TLSMs, es[j].TLSMs
+			if ai == 0 {
+				ai = 1 << 30
+			}
+			if aj == 0 {
+				aj = 1 << 30
+			}
+			return ai < aj
+		})
+		if perCountryCap > 0 && len(es) > perCountryCap {
+			byCC[cc] = es[:perCountryCap]
 		}
-		if aj == 0 {
-			aj = 1 << 30
+	}
+
+	// Stable iteration order: alphabetical by country code, with the
+	// unknown-country bucket ("") last so it doesn't displace named
+	// countries in the early round-robin rounds.
+	ccs := make([]string, 0, len(byCC))
+	for cc := range byCC {
+		ccs = append(ccs, cc)
+	}
+	sort.Slice(ccs, func(i, j int) bool {
+		if ccs[i] == "" {
+			return false
 		}
-		return ai < aj
+		if ccs[j] == "" {
+			return true
+		}
+		return ccs[i] < ccs[j]
 	})
-	if max > 0 && len(tlsPassers) > max {
-		tlsPassers = tlsPassers[:max]
+
+	cursors := make(map[string]int, len(ccs))
+	out := make([]*Entry, 0, len(entries))
+	for {
+		progressed := false
+		for _, cc := range ccs {
+			bucket := byCC[cc]
+			i := cursors[cc]
+			if i >= len(bucket) {
+				continue
+			}
+			out = append(out, bucket[i])
+			cursors[cc] = i + 1
+			progressed = true
+			if maxGlobal > 0 && len(out) >= maxGlobal {
+				return out
+			}
+		}
+		if !progressed {
+			break
+		}
 	}
-	return tlsPassers
+	return out
 }
 
 // sortByBestLatency orders entries so the most-trusted, fastest ones

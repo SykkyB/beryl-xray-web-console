@@ -769,13 +769,18 @@
         },
 
         async startScan() {
-            const deep    = $("#scan-deep").checked;
-            const maxDeep = parseInt($("#scan-max-deep").value, 10) || 200;
-            const hardMin = parseInt($("#scan-hard-min").value, 10) || 20;
-            const pause   = $("#scan-pause-active").checked;
+            const deep        = $("#scan-deep").checked;
+            const maxDeep     = parseInt($("#scan-max-deep").value, 10) || 200;
+            const perCountry  = parseInt($("#scan-per-country").value, 10) || 30;
+            const hardMin     = parseInt($("#scan-hard-min").value, 10) || 20;
+            const pause       = $("#scan-pause-active").checked;
             try {
                 const r = await postJSON("/api/scan/start", {
-                    deep, max_deep: maxDeep, hard_timeout_s: hardMin * 60, skip_active: pause,
+                    deep,
+                    max_deep: maxDeep,
+                    max_per_country: perCountry,
+                    hard_timeout_s: hardMin * 60,
+                    skip_active: pause,
                 });
                 scout.scanID = r.scan_id;
                 $("#scan-progress").hidden = false;
