@@ -45,3 +45,15 @@ auth:
 # `/etc/init.d/xray-panel-cli restart`, refresh the browser.
 injection:
   mode: legacy
+
+# VPN Scout — fetch external vless:// lists, probe them, browse results
+# grouped by country. Optional block; defaults shown below.
+scout:
+  # User-managed list of sources (added via /api/sources). Built-in
+  # presets are baked into the binary, this file only stores user
+  # additions and per-preset enable overrides.
+  sources_file: /etc/xray-panel-cli/sources.json
+  # Where completed-scan JSON snapshots are written. Each is named
+  # <scan-id>.json. Old snapshots beyond scans_keep get pruned.
+  scans_dir:    /etc/xray-panel-cli/scans
+  scans_keep:   5

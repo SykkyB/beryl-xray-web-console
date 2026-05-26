@@ -28,6 +28,7 @@
         <nav class="tabs" role="tablist">
             <button role="tab" aria-selected="true"  data-tab="control">Control</button>
             <button role="tab" aria-selected="false" data-tab="monitor">Monitor</button>
+            <button role="tab" aria-selected="false" data-tab="scout">VPN Scout</button>
         </nav>
 
         <!-- ─── Control pane: Sing-box service + Profiles ──────────────── -->
@@ -195,8 +196,92 @@
 
         </section>
 
+        <!-- VPN Scout: fetch external vless lists, probe them, browse by country -->
+        <section data-pane="scout" hidden>
+
+            <section class="card" data-card="sources">
+                <div class="card-head"><h2>Sources</h2></div>
+                <div class="card-body">
+                    <div id="sources-list" class="sources-list">Loading…</div>
+                    <form class="add-source-form" id="add-source-form">
+                        <input type="text" name="name" placeholder="Source name (e.g. my-list)" required>
+                        <input type="text" name="loc" placeholder="https://… URL or /absolute/path on router" required>
+                        <button type="submit" class="btn-action">Add</button>
+                    </form>
+                    <p class="hint">
+                        Sources are vless:// URL lists (one per line). Built-in presets can be enabled/disabled but not removed. Use http(s):// for a remote list or an absolute path for a file already on the router.
+                    </p>
+                </div>
+            </section>
+
+            <section class="card" data-card="scan">
+                <div class="card-head"><h2>Scan</h2></div>
+                <div class="card-body">
+                    <div class="scan-controls">
+                        <label class="scan-opt">
+                            <input type="checkbox" id="scan-deep" checked>
+                            <span>Deep probe (spawn sing-box per candidate — slower but verifies VLESS session actually carries traffic)</span>
+                        </label>
+                        <label class="scan-opt">
+                            <span>Max deep candidates</span>
+                            <input type="number" id="scan-max-deep" value="200" min="0" max="2000">
+                        </label>
+                        <label class="scan-opt">
+                            <span>Hard timeout (minutes)</span>
+                            <input type="number" id="scan-hard-min" value="20" min="1" max="120">
+                        </label>
+                        <label class="scan-opt">
+                            <input type="checkbox" id="scan-pause-active">
+                            <span>Pause active VPN tunnel during scan (resumes when done — LAN goes direct WAN meanwhile)</span>
+                        </label>
+                        <div class="scan-buttons">
+                            <button class="btn-action" id="scan-start-btn">Scan now</button>
+                            <button class="btn-ghost" id="scan-cancel-btn" hidden>Cancel</button>
+                        </div>
+                    </div>
+                    <div id="scan-progress" class="scan-progress" hidden>
+                        <div class="progress-bar"><div class="progress-fill" id="scan-progress-fill"></div></div>
+                        <div class="scan-progress-text" id="scan-progress-text">Starting…</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card" data-card="results">
+                <div class="card-head">
+                    <h2>Results <span id="results-summary" class="results-summary"></span></h2>
+                </div>
+                <div class="card-body">
+                    <div id="results-empty" class="hint">No scan yet. Configure sources above and click <strong>Scan now</strong>.</div>
+                    <div id="results-groups" class="results-groups"></div>
+                </div>
+            </section>
+
+        </section>
+
         <p id="action-result" class="action-result"></p>
     </main>
+
+    <!-- Add-to-profiles modal (hidden by default) -->
+    <div id="add-profile-modal" class="modal" hidden>
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h3>Import profile</h3>
+            <div class="modal-preview">
+                <div><strong>Server</strong> <span id="modal-server">—</span></div>
+                <div><strong>Transport</strong> <span id="modal-transport">—</span></div>
+                <div><strong>Latency</strong> <span id="modal-latency">—</span></div>
+                <div><strong>Country</strong> <span id="modal-country">—</span></div>
+            </div>
+            <label class="modal-name">
+                <span>Profile name</span>
+                <input type="text" id="modal-name">
+            </label>
+            <div class="modal-buttons">
+                <button class="btn-ghost" id="modal-cancel">Cancel</button>
+                <button class="btn-action" id="modal-confirm">Add to profiles</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/app.js"></script>
 </body>

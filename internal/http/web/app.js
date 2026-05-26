@@ -614,8 +614,8 @@
             if (btn) profileAction(btn);
         });
 
-        // Tab switcher — Control / Monitor. Hidden panes still get
-        // their data refreshed in the background so switching tabs
+        // Tab switcher — Control / Monitor / VPN Scout. Hidden panes
+        // still get their data refreshed in the background so switching
         // is instant; cheap polls won't pile up on a slow router.
         document.querySelectorAll(".tabs button[data-tab]").forEach((tab) => {
             tab.addEventListener("click", () => {
@@ -625,8 +625,19 @@
                 document.querySelectorAll("section[data-pane]").forEach((s) => {
                     s.hidden = (s.getAttribute("data-pane") !== tab.getAttribute("data-tab"));
                 });
+                if (tab.getAttribute("data-tab") === "scout" && !scout.loaded) {
+                    scout.init();
+                    scout.loaded = true;
+                }
             });
         });
+
+        // Modal interactions (live on the page from boot, so wire once).
+        $("#modal-cancel").addEventListener("click", () => { $("#add-profile-modal").hidden = true; });
+        $("#modal-confirm").addEventListener("click", () => scout.submitAdd());
+        $("#add-source-form").addEventListener("submit", (e) => { e.preventDefault(); scout.addSource(e.target); });
+        $("#scan-start-btn").addEventListener("click", () => scout.startScan());
+        $("#scan-cancel-btn").addEventListener("click", () => scout.cancelScan());
 
         fetchState();
         fetchProfiles();
@@ -656,4 +667,300 @@
             }
         });
     });
+
+    // ── VPN Scout module ───────────────────────────────────────────────
+    // Lazy-loaded on first tab click (scout.init). Owns its own polling
+    // and DOM state — the rest of the panel doesn't touch it.
+    const scout = {
+        loaded: false,
+        scanID: null,
+        pollTimer: null,
+        currentEntry: null, // entry being previewed in the Add modal
+
+        init() {
+            scout.fetchSources();
+        },
+
+        async fetchSources() {
+            try {
+                const r = await fetch("/api/sources", { credentials: "same-origin" });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const data = await r.json();
+                scout.renderSources(data.sources || []);
+            } catch (err) {
+                $("#sources-list").textContent = "Failed to load sources: " + err.message;
+            }
+        },
+
+        renderSources(sources) {
+            const c = $("#sources-list");
+            if (sources.length === 0) {
+                c.innerHTML = `<div class="hint">No sources yet — add one below.</div>`;
+                return;
+            }
+            c.innerHTML = sources.map((s) => {
+                const loc = s.url || s.path || "";
+                const removeBtn = s.kind === "user"
+                    ? `<button class="btn-ghost source-delete" data-id="${escapeHTML(s.id)}">Remove</button>`
+                    : `<span class="pill pill-muted">preset</span>`;
+                return `
+                    <div class="source-row" data-id="${escapeHTML(s.id)}">
+                        <label class="source-toggle">
+                            <input type="checkbox" class="source-enabled" data-id="${escapeHTML(s.id)}" ${s.enabled ? "checked" : ""}>
+                            <span class="source-name">${escapeHTML(s.name)}</span>
+                        </label>
+                        <span class="source-loc" title="${escapeHTML(loc)}">${escapeHTML(loc)}</span>
+                        ${removeBtn}
+                    </div>
+                `;
+            }).join("");
+            c.querySelectorAll(".source-enabled").forEach((cb) => {
+                cb.addEventListener("change", () => scout.toggleSource(cb.dataset.id, cb.checked));
+            });
+            c.querySelectorAll(".source-delete").forEach((b) => {
+                b.addEventListener("click", () => scout.deleteSource(b.dataset.id));
+            });
+        },
+
+        async addSource(form) {
+            const fd = new FormData(form);
+            const name = (fd.get("name") || "").toString().trim();
+            const loc  = (fd.get("loc")  || "").toString().trim();
+            if (!name || !loc) return;
+            const body = { name };
+            if (loc.startsWith("/")) body.path = loc; else body.url = loc;
+            try {
+                await postJSON("/api/sources", body);
+                form.reset();
+                scout.fetchSources();
+                setActionResult("Source added: " + name, true);
+            } catch (err) {
+                setActionResult("Add source failed: " + err.message, false);
+            }
+        },
+
+        async toggleSource(id, enabled) {
+            try {
+                const r = await fetch(`/api/sources/${encodeURIComponent(id)}`, {
+                    method: "PATCH",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ enabled }),
+                });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+            } catch (err) {
+                setActionResult("Toggle failed: " + err.message, false);
+                scout.fetchSources();
+            }
+        },
+
+        async deleteSource(id) {
+            if (!confirm("Remove this source?")) return;
+            try {
+                const r = await fetch(`/api/sources/${encodeURIComponent(id)}`, {
+                    method: "DELETE",
+                    credentials: "same-origin",
+                });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                scout.fetchSources();
+            } catch (err) {
+                setActionResult("Remove failed: " + err.message, false);
+            }
+        },
+
+        async startScan() {
+            const deep    = $("#scan-deep").checked;
+            const maxDeep = parseInt($("#scan-max-deep").value, 10) || 200;
+            const hardMin = parseInt($("#scan-hard-min").value, 10) || 20;
+            const pause   = $("#scan-pause-active").checked;
+            try {
+                const r = await postJSON("/api/scan/start", {
+                    deep, max_deep: maxDeep, hard_timeout_s: hardMin * 60, skip_active: pause,
+                });
+                scout.scanID = r.scan_id;
+                $("#scan-progress").hidden = false;
+                $("#scan-cancel-btn").hidden = false;
+                $("#scan-start-btn").disabled = true;
+                $("#results-empty").hidden = true;
+                $("#results-groups").innerHTML = "";
+                scout.poll();
+            } catch (err) {
+                setActionResult("Scan failed to start: " + err.message, false);
+            }
+        },
+
+        async poll() {
+            if (!scout.scanID) return;
+            try {
+                const r = await fetch(`/api/scan/status?id=${encodeURIComponent(scout.scanID)}`, { credentials: "same-origin" });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const s = await r.json();
+                scout.renderProgress(s);
+                if (["done", "cancelled", "error", "timed_out"].includes(s.stage)) {
+                    scout.stopPolling();
+                    scout.fetchResults();
+                    if (s.stage === "error") {
+                        setActionResult("Scan error: " + (s.error || "unknown"), false);
+                    } else if (s.stage === "timed_out") {
+                        setActionResult("Scan timed out — showing partial results", false);
+                    } else if (s.stage === "cancelled") {
+                        setActionResult("Scan cancelled — partial results below", true);
+                    } else {
+                        setActionResult("Scan complete", true);
+                    }
+                } else {
+                    scout.pollTimer = setTimeout(scout.poll, 1500);
+                }
+            } catch (err) {
+                // Network blip — back off briefly and retry.
+                scout.pollTimer = setTimeout(scout.poll, 3000);
+            }
+        },
+
+        stopPolling() {
+            if (scout.pollTimer) { clearTimeout(scout.pollTimer); scout.pollTimer = null; }
+            $("#scan-cancel-btn").hidden = true;
+            $("#scan-start-btn").disabled = false;
+        },
+
+        renderProgress(s) {
+            const pct = s.total > 0 ? Math.round(s.done * 100 / s.total) : 0;
+            $("#scan-progress-fill").style.width = pct + "%";
+            const parts = [
+                `stage: ${s.stage}`,
+                `${s.done}/${s.total || "?"}`,
+                `tcp:${s.tcp_ok || 0}`,
+                `tls:${s.tls_ok || 0}`,
+                `deep:${s.vless_ok || 0}`,
+                `elapsed:${s.elapsed_s || 0}s`,
+            ];
+            $("#scan-progress-text").textContent = parts.join("  ");
+        },
+
+        async cancelScan() {
+            if (!scout.scanID) return;
+            try {
+                await fetch(`/api/scan/cancel?id=${encodeURIComponent(scout.scanID)}`, {
+                    method: "POST",
+                    credentials: "same-origin",
+                });
+            } catch (err) {
+                setActionResult("Cancel failed: " + err.message, false);
+            }
+        },
+
+        async fetchResults() {
+            if (!scout.scanID) return;
+            try {
+                const r = await fetch(`/api/scan/results?id=${encodeURIComponent(scout.scanID)}`, { credentials: "same-origin" });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const data = await r.json();
+                scout.renderResults(data);
+            } catch (err) {
+                setActionResult("Fetch results failed: " + err.message, false);
+            }
+        },
+
+        renderResults(d) {
+            $("#results-empty").hidden = true;
+            $("#results-summary").textContent =
+                ` — parsed ${d.parsed || 0}, deduped −${d.deduped || 0}, tcp ${d.tcp_ok || 0}, tls ${d.tls_ok || 0}, deep ${d.deep_ok || 0}, ${d.elapsed_s || 0}s`;
+            const groups = d.groups || [];
+            if (groups.length === 0) {
+                $("#results-groups").innerHTML = `<div class="hint">No live candidates passed the probe. Try a different source or disable Deep probe.</div>`;
+                return;
+            }
+            $("#results-groups").innerHTML = groups.map((g, gi) => `
+                <details class="country-group" ${gi === 0 ? "open" : ""}>
+                    <summary>${g.flag || "🌍"} ${escapeHTML(g.country || "Unknown")} <span class="group-count">(${g.count})</span></summary>
+                    <table class="results-table">
+                        <thead><tr><th>Server</th><th>Transport</th><th>Latency</th><th>Name</th><th></th></tr></thead>
+                        <tbody>
+                            ${(g.entries || []).map((e, idx) => `
+                                <tr>
+                                    <td>${escapeHTML(e.server || "—")}:${e.port || ""}</td>
+                                    <td><span class="pill pill-muted">${escapeHTML(e.transport + "+" + e.security)}</span></td>
+                                    <td>${scoutLatencyPill(e)}</td>
+                                    <td class="ellip" title="${escapeHTML(e.name || "")}">${escapeHTML(scoutCleanName(e.name) || "(no name)")}</td>
+                                    <td><button class="btn-action btn-add-scout" data-gi="${gi}" data-idx="${idx}">+ Add</button></td>
+                                </tr>
+                            `).join("")}
+                        </tbody>
+                    </table>
+                </details>
+            `).join("");
+            // Stash data so click handlers can look up entries.
+            scout.lastResults = d;
+            $("#results-groups").querySelectorAll(".btn-add-scout").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    const gi  = parseInt(btn.dataset.gi, 10);
+                    const idx = parseInt(btn.dataset.idx, 10);
+                    const e = d.groups[gi].entries[idx];
+                    scout.openAddModal(e, d.groups[gi].country, d.groups[gi].flag);
+                });
+            });
+        },
+
+        openAddModal(e, country, flag) {
+            scout.currentEntry = e;
+            $("#modal-server").textContent = (e.server || "") + ":" + (e.port || "");
+            $("#modal-transport").textContent = e.transport + "+" + e.security;
+            const lat = e.deep_ms || e.tls_ms || e.tcp_ms;
+            $("#modal-latency").textContent = lat ? lat + "ms" : "—";
+            $("#modal-country").textContent = (flag ? flag + " " : "") + (country || "Unknown");
+            // Auto-suggest: "🇩🇪 example.com" — cleaner than the raw fragment.
+            const suggested = (flag ? flag + " " : "") + (e.server || scoutCleanName(e.name) || "vless");
+            $("#modal-name").value = suggested.trim();
+            $("#add-profile-modal").hidden = false;
+        },
+
+        async submitAdd() {
+            const e = scout.currentEntry;
+            if (!e) return;
+            const name = $("#modal-name").value.trim();
+            if (!name) { alert("Name is required"); return; }
+            try {
+                await postJSON("/api/profiles/import-vless", { url: e.url, name });
+                $("#add-profile-modal").hidden = true;
+                setActionResult("Profile added: " + name, true);
+                fetchProfiles();
+            } catch (err) {
+                alert("Import failed: " + err.message);
+            }
+        },
+    };
+
+    // Pill colour for the strictest passing stage.
+    function scoutLatencyPill(e) {
+        if (e.deep_ok) {
+            const cls = e.deep_ms < 200 ? "pill-ok" : e.deep_ms < 500 ? "pill-warn" : "pill-bad";
+            return `<span class="pill ${cls}">${e.deep_ms}ms</span>`;
+        }
+        if (e.tls_ok) {
+            return `<span class="pill pill-warn">${e.tls_ms}ms tls</span>`;
+        }
+        if (e.tcp_ok) {
+            return `<span class="pill pill-muted">${e.tcp_ms}ms tcp</span>`;
+        }
+        return `<span class="pill pill-bad">—</span>`;
+    }
+
+    // scoutCleanName strips Persian/Arabic ad spam and channel @-handles
+    // from a raw URL fragment so the table column isn't a wall of noise.
+    // Keeps the leading flag (if any) and the first ASCII token.
+    function scoutCleanName(name) {
+        if (!name) return "";
+        // Drop everything after the first "@" — typically a Telegram tag.
+        const at = name.indexOf("@");
+        if (at >= 0) name = name.slice(0, at);
+        // Strip control + high-codepoint clutter except flag emoji range.
+        let out = "";
+        for (const ch of name) {
+            const cp = ch.codePointAt(0);
+            if (cp >= 0x1F1E6 && cp <= 0x1F1FF) { out += ch; continue; }
+            if (cp >= 0x20 && cp < 0x7F)        { out += ch; continue; }
+        }
+        return out.trim().slice(0, 60);
+    }
+
 })();

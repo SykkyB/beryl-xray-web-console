@@ -38,6 +38,10 @@ type Server struct {
 	// the handlers don't race on lazy creation.
 	stateCache *stateCache
 	liveCache  *liveCache
+
+	// ScanRegistry holds the in-memory record of recent VPN Scout
+	// scans (see internal/http/scan.go). Initialised by NewServer.
+	ScanRegistry *scanRegistry
 }
 
 // NewServer returns *Server with internal caches initialised. Pass it
@@ -47,6 +51,7 @@ func NewServer(seed Server) *Server {
 	s := seed
 	s.stateCache = &stateCache{}
 	s.liveCache = &liveCache{}
+	s.ScanRegistry = newScanRegistry()
 	return &s
 }
 
@@ -74,6 +79,16 @@ func (s *Server) Handler() nethttp.Handler {
 	mux.HandleFunc("GET /api/live", s.handleLive)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/logs/stream", s.handleLogsStream)
+	// VPN Scout: sources + scan orchestration
+	mux.HandleFunc("GET /api/sources", s.handleSourcesList)
+	mux.HandleFunc("POST /api/sources", s.handleSourcesAdd)
+	mux.HandleFunc("PATCH /api/sources/{id}", s.handleSourcesUpdate)
+	mux.HandleFunc("DELETE /api/sources/{id}", s.handleSourcesDelete)
+	mux.HandleFunc("POST /api/scan/start", s.handleScanStart)
+	mux.HandleFunc("GET /api/scan/status", s.handleScanStatus)
+	mux.HandleFunc("GET /api/scan/results", s.handleScanResults)
+	mux.HandleFunc("POST /api/scan/cancel", s.handleScanCancel)
+	mux.HandleFunc("GET /api/scans/list", s.handleScanList)
 	registerUIRoutes(mux)
 	authed := BasicAuth(s.Cfg.Auth.Username, s.Cfg.Auth.PasswordBcrypt, mux)
 

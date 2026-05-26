@@ -255,14 +255,20 @@ open http://192.168.200.1:9092/                 # веб-панель
 
 ## Веб-панель (`xray-panel-cli`)
 
-### Экраны
+### Вкладки и экраны
 
-1. **Sing-box** — статус (Process / TUN / Boot / Active profile), кнопки управления.
-2. **Profiles** — список VLESS-профилей с активным помечен ACTIVE, кнопки Activate / Delete, форма импорта `vless://` URL.
-3. **Killswitch** — тумблер ON/OFF (синхронизирован с UCI `sing-box.config.killswitch`).
-4. **Physical switch** — позиция переключателя на корпусе + тумблер bind_switch (UCI `sing-box.config.bind_switch`).
-5. **Live** — exit IP, текущая скорость up/down, кол-во активных connections, top-10 потоков.
-6. **Logs** — последние 200 строк `/var/log/sing-box.log` с auto-refresh (3с) и auto-scroll.
+**Control** — Sing-box + Profiles:
+1. **Sing-box** — статус-лампочки в шапке (Process / TUN / Boot / Phys. switch / Side switch / Killswitch), кнопки Start/Stop/Restart/Reload. Killswitch + Side switch — read-only индикаторы (контролы в GL.iNet VPN Dashboard).
+2. **Profiles** — список VLESS-профилей, кнопки Activate / Delete, форма импорта `vless://` URL.
+
+**Monitor** — Live + Logs:
+3. **Live** — exit IP, текущая скорость up/down, кол-во активных connections, top-10 потоков.
+4. **Logs** — стрим `/var/log/sing-box.log` (SSE), auto-scroll.
+
+**VPN Scout** — поиск рабочих VPN-конфигов в публичных списках (Phase 5):
+5. **Sources** — менеджер источников: пресет `kort0881` + добавление своих URL/файлов. Включать/выключать чекбоксом, удалять Remove.
+6. **Scan** — параметры скана (deep-probe, max candidates, hard timeout, пауза активного тоннеля), прогресс-бар + Cancel.
+7. **Results** — конфиги сгруппированы по странам (флаг emoji из имени), latency-pill по строгости пройденной стадии, кнопка `+ Add` открывает modal-предпросмотр с редактируемым именем перед импортом.
 
 ### REST API
 
@@ -283,6 +289,15 @@ open http://192.168.200.1:9092/                 # веб-панель
 | POST | `/api/profiles/{id}/activate` | render → sing-box check → write → uci commit → reload + clash close |
 | GET  | `/api/live` | exit IP, traffic rates, top flows |
 | GET  | `/api/logs?lines=N` | tail sing-box.log (default 100, max 1000) |
+| GET  | `/api/sources` | список источников для VPN Scout (пресеты + user-added) |
+| POST | `/api/sources` | `{name, url\|path, enabled?}` — добавить источник |
+| PATCH | `/api/sources/{id}` | `{name?, enabled?}` — переименовать / включить-выключить |
+| DELETE | `/api/sources/{id}` | удалить (user-added, пресеты только disable) |
+| POST | `/api/scan/start` | `{source_ids?, deep, max_deep, hard_timeout_s, skip_active}` → `{scan_id}` |
+| GET  | `/api/scan/status?id=...` | прогресс scan'а (stage, done/total, tcp_ok, tls_ok, vless_ok) |
+| GET  | `/api/scan/results?id=...` | результат: flat entries + сгруппированные по странам |
+| POST | `/api/scan/cancel?id=...` | прервать активный scan |
+| GET  | `/api/scans/list` | список снапшотов на диске |
 
 Под капотом — `/api/state` (3с) и `/api/live` (1.5с) имеют кеш с single-flight, чтобы N браузерных вкладок не множили нагрузку.
 
@@ -719,7 +734,16 @@ DONE in 47s — kept 11/30 (tcp_ok=30 tls_ok=28 vless_ok=11) → samples/raw.ali
 - [x] Stock UCI ключ `switch-button.@main[0].func='xray'` обрабатывается нашим hotplug; стоковый `/etc/rc.button/switch` пытается выполнить несуществующий `/etc/gl-switch.d/xray.sh` → no-op без `mcu_send_message` нотификации
 - [x] Backup-скрипт включает `/etc/config/switch-button` — состояние Phase 4 переживает rebuild прошивки
 
-### Phase 5 — TODO
+### Phase 5 — VPN Scout (поиск конфигов из публичных списков) — done
+- [x] Рефакторинг `cmd/vless-vet` → `internal/vetlib/` (parse, probe, deep, pipeline) — переиспользуется панелью и CLI
+- [x] Country-detection: парсинг флаг-emoji из `#fragment` URL → ISO-2 → группа
+- [x] Sources management: `/api/sources` GET/POST/PATCH/DELETE с пресетами (kort0881) и user-added URL/path
+- [x] Scan orchestrator: `/api/scan/{start,status,results,cancel}` + `/api/scans/list`, in-memory state + JSON snapshots в `/etc/xray-panel-cli/scans/` (keep-last-5)
+- [x] Воронка parse → dedup → TCP → TLS → deep с лимитами (max-deep + hard-timeout)
+- [x] Опция `skip_active` — паузить активный sing-box на время скана
+- [x] Фронт: новый таб **VPN Scout** со списком источников, scan-controls, прогресс-баром, результатами сгруппированными по странам, modal-предпросмотром перед Add
+
+### Phase 6 — TODO
 - [ ] Симметричный апдейт для серверной стороны (`flint2-xray-web-console`)
 - [ ] Multi-outbound `selector` / `urltest` для real-time fail-over без рестарта sing-box
 - [ ] WebSocket-стрим логов (вместо REST polling)
@@ -727,6 +751,7 @@ DONE in 47s — kept 11/30 (tcp_ok=30 tls_ok=28 vless_ok=11) → samples/raw.ali
 - [ ] Edit/rename профилей (сейчас только Add/Activate/Delete)
 - [ ] Опциональный i18n (английский по умолчанию, русский opt-in)
 - [ ] Сплит launcher.js (~1950 строк) на модули (core / dashboard / drawer / log / side-switch)
+- [ ] Рефакторинг `cmd/vless-vet/{main,deep}.go` поверх `internal/vetlib/` (сейчас CLI и панель имеют параллельную копию логики)
 
 ---
 

@@ -57,6 +57,43 @@ type Config struct {
 	Auth AuthConfig `yaml:"auth"`
 
 	Injection InjectionConfig `yaml:"injection,omitempty"`
+
+	// Scout holds paths/settings for the VPN Scout feature (probe
+	// external vless lists, deep-test, browse by country). Optional —
+	// defaults filled in by ScoutWithDefaults when fields are blank.
+	Scout ScoutConfig `yaml:"scout,omitempty"`
+}
+
+// ScoutConfig configures the VPN Scout feature: where source lists are
+// stored, where snapshots of past scans live, and how many to keep.
+type ScoutConfig struct {
+	// SourcesFile persists the user's curated list of remote vless URLs
+	// and local file paths.
+	SourcesFile string `yaml:"sources_file,omitempty"`
+
+	// ScansDir holds JSON snapshots of completed scans (one per file,
+	// named <timestamp>.json). Old snapshots beyond ScansKeep are
+	// rotated out on each new save.
+	ScansDir string `yaml:"scans_dir,omitempty"`
+
+	// ScansKeep caps the snapshot directory; 0 = use default (5).
+	ScansKeep int `yaml:"scans_keep,omitempty"`
+}
+
+// ScoutWithDefaults returns Scout with empty fields filled in. Used by
+// the panel's HTTP layer so handlers don't have to scatter defaults.
+func (c *Config) ScoutWithDefaults() ScoutConfig {
+	s := c.Scout
+	if s.SourcesFile == "" {
+		s.SourcesFile = "/etc/xray-panel-cli/sources.json"
+	}
+	if s.ScansDir == "" {
+		s.ScansDir = "/etc/xray-panel-cli/scans"
+	}
+	if s.ScansKeep <= 0 {
+		s.ScansKeep = 5
+	}
+	return s
 }
 
 // InjectionConfig controls how much of the GL.iNet stock admin UI the

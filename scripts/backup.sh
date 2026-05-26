@@ -41,6 +41,9 @@ PATHS=(
     /etc/init.d/xray-panel-cli
     /etc/hotplug.d/button/50-sing-box-switch
     /etc/xray-panel-cli
+    # /etc/xray-panel-cli contains panel.yaml, profiles.json, sources.json
+    # (VPN Scout) and the scans/ subdir of snapshot JSONs — all swept up
+    # by including the dir.
     /etc/sysctl.d/99-disable-mptcp.conf
     # GL.iNet UI launcher integration
     /www/xray-panel-launcher.js
