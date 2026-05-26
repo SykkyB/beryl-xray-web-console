@@ -117,11 +117,15 @@ func (s *Server) handleScanStart(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, nethttp.StatusInternalServerError, errors.New("scan registry not initialised"))
 		return
 	}
+	// MaxDeep / MaxPerCountry use pointer-bool semantics via a custom
+	// presence test so 0 unambiguously means "no cap" rather than
+	// "use default". UI sends the number the user typed; backend
+	// applies a default only when the field is genuinely missing.
 	var body struct {
 		SourceIDs     []string `json:"source_ids"`
 		Deep          bool     `json:"deep"`
-		MaxDeep       int      `json:"max_deep"`
-		MaxPerCountry int      `json:"max_per_country"`
+		MaxDeep       *int     `json:"max_deep"`
+		MaxPerCountry *int     `json:"max_per_country"`
 		HardTimeoutS  int      `json:"hard_timeout_s"`
 		SkipActive    bool     `json:"skip_active"` // pause active sing-box for the scan
 	}
@@ -166,13 +170,22 @@ func (s *Server) handleScanStart(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if hard == 0 {
 		hard = 20 * time.Minute
 	}
-	maxDeep := body.MaxDeep
-	if maxDeep == 0 && body.Deep {
-		maxDeep = 200
+	// Resolve nullable caps: missing field → default; explicit 0 →
+	// no cap (caller wants "scan everything"); positive → use as-is.
+	// Negative is treated as missing for safety.
+	maxDeep := 200
+	if body.MaxDeep != nil && *body.MaxDeep >= 0 {
+		maxDeep = *body.MaxDeep
 	}
-	maxPerCountry := body.MaxPerCountry
-	if maxPerCountry == 0 && body.Deep {
-		maxPerCountry = 30 // fair-share default, ~7 countries fills 200
+	maxPerCountry := 30 // fair-share default, ~7 countries fills 200
+	if body.MaxPerCountry != nil && *body.MaxPerCountry >= 0 {
+		maxPerCountry = *body.MaxPerCountry
+	}
+	// Defaults only matter when Deep is on; otherwise both caps go
+	// unused by the pipeline.
+	if !body.Deep {
+		maxDeep = 0
+		maxPerCountry = 0
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

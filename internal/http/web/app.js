@@ -799,19 +799,23 @@
         },
 
         async startScan() {
-            const deep        = $("#scan-deep").checked;
-            const maxDeep     = parseInt($("#scan-max-deep").value, 10) || 200;
-            const perCountry  = parseInt($("#scan-per-country").value, 10) || 30;
-            const hardMin     = parseInt($("#scan-hard-min").value, 10) || 20;
-            const pause       = $("#scan-pause-active").checked;
+            const deep    = $("#scan-deep").checked;
+            // parseInt("0", 10) is 0, but `|| default` would treat
+            // it as falsy. Use a NaN check so the user typing 0
+            // sends 0 to mean "no cap".
+            const maxDeepRaw    = parseInt($("#scan-max-deep").value, 10);
+            const perCountryRaw = parseInt($("#scan-per-country").value, 10);
+            const hardMin       = parseInt($("#scan-hard-min").value, 10) || 20;
+            const pause   = $("#scan-pause-active").checked;
+            const body = {
+                deep,
+                hard_timeout_s: hardMin * 60,
+                skip_active: pause,
+            };
+            if (Number.isFinite(maxDeepRaw))    body.max_deep        = maxDeepRaw;
+            if (Number.isFinite(perCountryRaw)) body.max_per_country = perCountryRaw;
             try {
-                const r = await postJSON("/api/scan/start", {
-                    deep,
-                    max_deep: maxDeep,
-                    max_per_country: perCountry,
-                    hard_timeout_s: hardMin * 60,
-                    skip_active: pause,
-                });
+                const r = await postJSON("/api/scan/start", body);
                 scout.scanID = r.scan_id;
                 $("#scan-progress").hidden = false;
                 $("#scan-cancel-btn").hidden = false;

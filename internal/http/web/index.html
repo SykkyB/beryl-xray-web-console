@@ -223,12 +223,12 @@
                             <span>Deep probe (spawn sing-box per candidate — slower but verifies VLESS session actually carries traffic)</span>
                         </label>
                         <label class="scan-opt">
-                            <span>Max deep candidates</span>
-                            <input type="number" id="scan-max-deep" value="200" min="0" max="2000">
+                            <span>Max deep candidates <small>(0 = no cap)</small></span>
+                            <input type="number" id="scan-max-deep" value="200" min="0" max="5000">
                         </label>
                         <label class="scan-opt">
-                            <span>Per-country cap (round-robin)</span>
-                            <input type="number" id="scan-per-country" value="30" min="0" max="500">
+                            <span>Per-country cap, round-robin <small>(0 = no cap)</small></span>
+                            <input type="number" id="scan-per-country" value="30" min="0" max="1000">
                         </label>
                         <label class="scan-opt">
                             <span>Hard timeout (minutes)</span>

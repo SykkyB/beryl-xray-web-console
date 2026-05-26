@@ -327,11 +327,16 @@ func (s *Server) handleSourcesUpdate(w nethttp.ResponseWriter, r *nethttp.Reques
 	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true})
 }
 
-// POST /api/sources/refresh   body: {ids?: [...]}  (omit = all enabled)
+// POST /api/sources/refresh   body: {ids?: [...]}  (omit = ALL sources)
 // Fetches each picked source, updates per-source meta on disk, returns
 // the updated list. Does NOT run a probe — strictly a "did the fetch
 // succeed and is the content fresh?" check, takes ~1-3s for a
 // handful of public lists.
+//
+// Refresh deliberately includes DISABLED sources too when ids is
+// omitted: users want to see the state of a source before deciding
+// whether to enable it. The scan path, by contrast, only picks
+// enabled sources (see pickSources).
 func (s *Server) handleSourcesRefresh(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var body struct {
 		IDs []string `json:"ids"`
@@ -345,7 +350,15 @@ func (s *Server) handleSourcesRefresh(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeErr(w, nethttp.StatusInternalServerError, err)
 		return
 	}
-	picked := pickSources(all, body.IDs)
+	var picked []Source
+	if len(body.IDs) == 0 {
+		// "Refresh all" — include disabled too. Otherwise a disabled
+		// source can never get its meta probed, which defeats the
+		// whole point of the metadata view.
+		picked = all
+	} else {
+		picked = pickSources(all, body.IDs)
+	}
 	if len(picked) == 0 {
 		writeErr(w, nethttp.StatusBadRequest, errors.New("no sources to refresh"))
 		return
