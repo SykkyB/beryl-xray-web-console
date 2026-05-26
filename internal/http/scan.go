@@ -1,7 +1,10 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -361,9 +364,13 @@ func (s *Server) runScan(ctx context.Context, st *scanState, picked []Source) {
 		}
 	}()
 
-	// Stage A: fetch.
+	// Stage A: fetch. Pass the sourceStore so per-source meta
+	// (status, bytes, hash, last-fetched) is persisted as part of
+	// the fetch, surface-able to the UI without waiting for the
+	// scan to finish.
 	st.setStage("fetch")
-	inputs, fetched := openSourceInputs(ctx, picked)
+	store := newSourceStore(s.Cfg.ScoutWithDefaults().SourcesFile)
+	inputs, fetched := openSourceInputs(ctx, picked, store)
 	st.mu.Lock()
 	st.sourcesFetched = fetched
 	st.mu.Unlock()
@@ -432,60 +439,125 @@ func (st *scanState) markError(msg string) {
 
 // ── source fetching ──────────────────────────────────────────────
 
-// openSourceInputs builds the vetlib.NamedReader list for the picked
-// sources. Each opened body is buffered into memory (lists are <few MB)
-// so we can close the network read promptly. Returns the inputs that
-// succeeded plus a per-source success/failure record.
-func openSourceInputs(ctx context.Context, picked []Source) ([]vetlib.NamedReader, []sourceFetchInfo) {
-	out := make([]vetlib.NamedReader, 0, len(picked))
-	info := make([]sourceFetchInfo, 0, len(picked))
-	for _, src := range picked {
-		fi := sourceFetchInfo{ID: src.ID, Name: src.Name}
-		if src.Path != "" {
-			data, err := os.ReadFile(src.Path)
-			if err != nil {
-				fi.Error = err.Error()
-				info = append(info, fi)
-				continue
-			}
-			fi.OK = true
-			fi.Bytes = len(data)
-			info = append(info, fi)
-			out = append(out, vetlib.NamedReader{Name: src.Name, Reader: strings.NewReader(string(data))})
-			continue
-		}
-		// http(s)
-		data, err := fetchURLBytes(ctx, src.URL, 30*time.Second)
-		if err != nil {
-			fi.Error = err.Error()
-			info = append(info, fi)
-			continue
-		}
-		fi.OK = true
-		fi.Bytes = len(data)
-		info = append(info, fi)
-		out = append(out, vetlib.NamedReader{Name: src.Name, Reader: strings.NewReader(string(data))})
-	}
-	return out, info
-}
+// fetchSource downloads (URL) or reads (Path) one source, computing
+// hash/line-count/header metadata as it goes. Pure: no side effects
+// — callers persist meta themselves via sourceStore.updateMeta.
+//
+// On error, body is nil and meta still carries status/last_error/
+// last_fetched_at so the UI can surface the failure.
+func fetchSource(ctx context.Context, src Source) (body []byte, meta SourceMeta, err error) {
+	meta.LastFetchedAt = time.Now().UTC().Format(time.RFC3339)
 
-func fetchURLBytes(ctx context.Context, url string, timeout time.Duration) ([]byte, error) {
-	client := &nethttp.Client{Timeout: timeout}
-	req, err := nethttp.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+	if src.Path != "" {
+		data, ferr := os.ReadFile(src.Path)
+		if ferr != nil {
+			meta.LastStatus = "error"
+			meta.LastError = ferr.Error()
+			return nil, meta, ferr
+		}
+		fillContentMeta(&meta, data)
+		return data, meta, nil
+	}
+
+	client := &nethttp.Client{Timeout: 30 * time.Second}
+	req, rerr := nethttp.NewRequestWithContext(ctx, "GET", src.URL, nil)
+	if rerr != nil {
+		meta.LastStatus = "error"
+		meta.LastError = rerr.Error()
+		return nil, meta, rerr
 	}
 	req.Header.Set("User-Agent", "xray-panel-cli/scout")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
+	resp, rerr := client.Do(req)
+	if rerr != nil {
+		meta.LastStatus = "error"
+		meta.LastError = rerr.Error()
+		return nil, meta, rerr
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("http %d %s", resp.StatusCode, resp.Status)
+		meta.LastStatus = "error"
+		meta.LastError = fmt.Sprintf("http %d %s", resp.StatusCode, resp.Status)
+		return nil, meta, errors.New(meta.LastError)
 	}
 	const maxBytes = 32 << 20 // 32 MB hard cap on a single source
-	return io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	data, ierr := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if ierr != nil {
+		meta.LastStatus = "error"
+		meta.LastError = ierr.Error()
+		return nil, meta, ierr
+	}
+	fillContentMeta(&meta, data)
+	meta.HTTPLastMod = resp.Header.Get("Last-Modified")
+	meta.HTTPETag = resp.Header.Get("ETag")
+	return data, meta, nil
+}
+
+// fillContentMeta populates LastStatus, LastBytes, LastLines and
+// ContentHash from a freshly-fetched body. Default status is "ok";
+// the caller may overwrite to "unchanged" after a hash compare.
+func fillContentMeta(meta *SourceMeta, data []byte) {
+	meta.LastStatus = "ok"
+	meta.LastBytes = len(data)
+	meta.LastLines = countVlessLines(data)
+	h := sha256.Sum256(data)
+	meta.ContentHash = hex.EncodeToString(h[:])[:16]
+}
+
+// countVlessLines is a cheap "how many candidates does this list
+// claim to have" counter — anything starting with "vless://" wins.
+func countVlessLines(data []byte) int {
+	n := 0
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if bytes.HasPrefix(line, []byte("vless://")) {
+			n++
+		}
+	}
+	return n
+}
+
+// openSourceInputs fetches each picked source, persists per-source
+// meta (status, bytes, hash, …), and returns vetlib readers for the
+// ones that succeeded. Compares against previous meta to flag
+// "unchanged" runs so the UI can hint "list unchanged since 6h ago".
+func openSourceInputs(ctx context.Context, picked []Source, store *sourceStore) ([]vetlib.NamedReader, []sourceFetchInfo) {
+	out := make([]vetlib.NamedReader, 0, len(picked))
+	info := make([]sourceFetchInfo, 0, len(picked))
+	for _, src := range picked {
+		body, meta, err := fetchSource(ctx, src)
+
+		// Compare against previous meta to detect unchanged content.
+		// Carry the prior hash forward as PrevContentHash so the UI
+		// can show "hash a1b2c3d4 → e5f6a7b8 (changed)" if needed.
+		prev := store.previousMeta(src.ID)
+		if prev.ContentHash != "" {
+			meta.PrevContentHash = prev.ContentHash
+			if err == nil && prev.ContentHash == meta.ContentHash {
+				meta.LastStatus = "unchanged"
+			}
+		}
+		// Persist meta even on failure — surfacing a "tried, failed"
+		// record is the whole point of the feature.
+		_ = store.updateMeta(src.ID, meta)
+
+		fi := sourceFetchInfo{
+			ID:    src.ID,
+			Name:  src.Name,
+			OK:    err == nil,
+			Bytes: meta.LastBytes,
+		}
+		if err != nil {
+			fi.Error = err.Error()
+		}
+		info = append(info, fi)
+		if err == nil {
+			out = append(out, vetlib.NamedReader{
+				Name:   src.Name,
+				Reader: strings.NewReader(string(body)),
+			})
+		}
+	}
+	return out, info
 }
 
 // pickSources filters allSources by requested IDs, defaulting to all

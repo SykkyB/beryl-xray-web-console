@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -20,10 +21,16 @@ import (
 type Source struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
-	URL     string `json:"url"`     // empty when Path is set
+	URL     string `json:"url"`            // empty when Path is set
 	Path    string `json:"path,omitempty"` // local file path on the router
-	Kind    string `json:"kind"`    // "preset" | "user"
+	Kind    string `json:"kind"`           // "preset" | "user"
 	Enabled bool   `json:"enabled"`
+
+	// Meta is the last-fetch outcome. Populated by allSources from the
+	// per-ID Meta map in sourcesFile when listing. Not persisted as
+	// part of the source itself — admin-editing sources.json shouldn't
+	// require touching transient meta fields.
+	Meta SourceMeta `json:"meta,omitempty"`
 }
 
 // presetSources are baked-in source definitions. Identical names to the
@@ -46,12 +53,32 @@ var presetSources = []Source{
 	},
 }
 
+// SourceMeta carries last-fetch outcome for a source. Surfaced to the
+// UI alongside the source itself so the user can see whether the
+// remote is reachable, when we last pulled it, and whether the body
+// changed since the previous fetch. Updated by both the scan path
+// (fetched as part of /api/scan/start) and /api/sources/refresh.
+type SourceMeta struct {
+	LastFetchedAt   string `json:"last_fetched_at,omitempty"`   // RFC3339 UTC
+	LastStatus      string `json:"last_status,omitempty"`       // "ok" | "unchanged" | "error"
+	LastError       string `json:"last_error,omitempty"`
+	LastBytes       int    `json:"last_bytes,omitempty"`
+	LastLines       int    `json:"last_lines,omitempty"`        // count of vless:// lines
+	ContentHash     string `json:"content_hash,omitempty"`      // first 16 hex of sha256
+	PrevContentHash string `json:"prev_content_hash,omitempty"` // for change detection across runs
+	HTTPLastMod     string `json:"http_last_modified,omitempty"`
+	HTTPETag        string `json:"http_etag,omitempty"`
+}
+
 // sourcesFile is the on-disk persistence shape. We split user sources
 // from preset overrides so adding a new preset in a new release just
-// shows up; user list and per-preset enable flags persist.
+// shows up; user list and per-preset enable flags persist. Meta lives
+// here too, keyed by source ID, so admins editing the file by hand
+// don't have to worry about a parallel state file.
 type sourcesFile struct {
-	UserSources    []Source        `json:"user_sources"`
-	PresetEnabled  map[string]bool `json:"preset_enabled"` // ID → enabled
+	UserSources   []Source              `json:"user_sources"`
+	PresetEnabled map[string]bool       `json:"preset_enabled"` // ID → enabled
+	Meta          map[string]SourceMeta `json:"meta,omitempty"` // ID → meta
 }
 
 // sourceStore is a thin file-backed store with a mutex so concurrent
@@ -104,7 +131,8 @@ func (s *sourceStore) save(f *sourcesFile) error {
 	return nil
 }
 
-// allSources merges presets + user, applying PresetEnabled overrides.
+// allSources merges presets + user, applying PresetEnabled overrides
+// and attaching per-source Meta from the same file.
 func (s *sourceStore) allSources() ([]Source, error) {
 	f, err := s.load()
 	if err != nil {
@@ -115,10 +143,44 @@ func (s *sourceStore) allSources() ([]Source, error) {
 		if v, ok := f.PresetEnabled[p.ID]; ok {
 			p.Enabled = v
 		}
+		if m, ok := f.Meta[p.ID]; ok {
+			p.Meta = m
+		}
 		out = append(out, p)
 	}
-	out = append(out, f.UserSources...)
+	for _, u := range f.UserSources {
+		if m, ok := f.Meta[u.ID]; ok {
+			u.Meta = m
+		}
+		out = append(out, u)
+	}
 	return out, nil
+}
+
+// updateMeta atomically writes a single source's meta back to disk.
+// Used by scan fetch and by /api/sources/refresh. Existing meta for
+// the same ID is replaced wholesale.
+func (s *sourceStore) updateMeta(id string, m SourceMeta) error {
+	f, err := s.load()
+	if err != nil {
+		return err
+	}
+	if f.Meta == nil {
+		f.Meta = map[string]SourceMeta{}
+	}
+	f.Meta[id] = m
+	return s.save(f)
+}
+
+// previousMeta returns the meta we last persisted for id, or zero
+// value if there isn't one. Cheap read — no error path needed since
+// load() already handles missing file.
+func (s *sourceStore) previousMeta(id string) SourceMeta {
+	f, err := s.load()
+	if err != nil || f == nil {
+		return SourceMeta{}
+	}
+	return f.Meta[id]
 }
 
 // ── HTTP handlers ──────────────────────────────────────────────────
@@ -263,6 +325,60 @@ func (s *Server) handleSourcesUpdate(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, map[string]any{"ok": true})
+}
+
+// POST /api/sources/refresh   body: {ids?: [...]}  (omit = all enabled)
+// Fetches each picked source, updates per-source meta on disk, returns
+// the updated list. Does NOT run a probe — strictly a "did the fetch
+// succeed and is the content fresh?" check, takes ~1-3s for a
+// handful of public lists.
+func (s *Server) handleSourcesRefresh(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	// Body is optional — empty {} or no body at all = refresh everything.
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	store := newSourceStore(s.Cfg.ScoutWithDefaults().SourcesFile)
+	all, err := store.allSources()
+	if err != nil {
+		writeErr(w, nethttp.StatusInternalServerError, err)
+		return
+	}
+	picked := pickSources(all, body.IDs)
+	if len(picked) == 0 {
+		writeErr(w, nethttp.StatusBadRequest, errors.New("no sources to refresh"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	results := make([]map[string]any, 0, len(picked))
+	for _, src := range picked {
+		_, meta, ferr := fetchSource(ctx, src)
+		prev := store.previousMeta(src.ID)
+		if prev.ContentHash != "" {
+			meta.PrevContentHash = prev.ContentHash
+			if ferr == nil && prev.ContentHash == meta.ContentHash {
+				meta.LastStatus = "unchanged"
+			}
+		}
+		_ = store.updateMeta(src.ID, meta)
+		entry := map[string]any{
+			"id":     src.ID,
+			"name":   src.Name,
+			"meta":   meta,
+		}
+		if ferr != nil {
+			entry["error"] = ferr.Error()
+		}
+		results = append(results, entry)
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"ok":      true,
+		"results": results,
+	})
 }
 
 // DELETE /api/sources/{id}

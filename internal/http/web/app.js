@@ -698,7 +698,11 @@
                 c.innerHTML = `<div class="hint">No sources yet — add one below.</div>`;
                 return;
             }
-            c.innerHTML = sources.map((s) => {
+            c.innerHTML = `
+                <div class="sources-toolbar">
+                    <button class="btn-ghost" id="sources-refresh-all">Refresh all metadata</button>
+                </div>
+            ` + sources.map((s) => {
                 const loc = s.url || s.path || "";
                 const removeBtn = s.kind === "user"
                     ? `<button class="btn-ghost source-delete" data-id="${escapeHTML(s.id)}">Remove</button>`
@@ -710,7 +714,11 @@
                             <span class="source-name">${escapeHTML(s.name)}</span>
                         </label>
                         <span class="source-loc" title="${escapeHTML(loc)}">${escapeHTML(loc)}</span>
-                        ${removeBtn}
+                        <div class="source-actions">
+                            <button class="btn-ghost btn-small source-refresh" data-id="${escapeHTML(s.id)}">Refresh</button>
+                            ${removeBtn}
+                        </div>
+                        <div class="source-meta">${scoutSourceMetaHTML(s.meta)}</div>
                     </div>
                 `;
             }).join("");
@@ -720,6 +728,28 @@
             c.querySelectorAll(".source-delete").forEach((b) => {
                 b.addEventListener("click", () => scout.deleteSource(b.dataset.id));
             });
+            c.querySelectorAll(".source-refresh").forEach((b) => {
+                b.addEventListener("click", () => scout.refreshSource(b.dataset.id, b));
+            });
+            const all = $("#sources-refresh-all");
+            if (all) all.addEventListener("click", () => scout.refreshSource(null, all));
+        },
+
+        // refreshSource: id=null → refresh all. Disables the clicked
+        // button during the round-trip so the user can't spam it.
+        async refreshSource(id, btn) {
+            const orig = btn ? btn.textContent : "";
+            if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
+            try {
+                const body = id ? { ids: [id] } : {};
+                await postJSON("/api/sources/refresh", body);
+                await scout.fetchSources();
+                setActionResult(id ? "Refreshed source" : "Refreshed all sources", true);
+            } catch (err) {
+                setActionResult("Refresh failed: " + err.message, false);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = orig; }
+            }
         },
 
         async addSource(form) {
@@ -948,6 +978,60 @@
             return `<span class="pill pill-muted">${e.tcp_ms}ms tcp</span>`;
         }
         return `<span class="pill pill-bad">—</span>`;
+    }
+
+    // scoutSourceMetaHTML renders the per-source meta line: status pill,
+    // last-fetched relative time, bytes, line count, hash (with change
+    // indicator), and HTTP Last-Modified if present. Empty meta = "Never
+    // fetched" hint so users know to click Refresh.
+    function scoutSourceMetaHTML(meta) {
+        if (!meta || !meta.last_fetched_at) {
+            return `<span class="meta-empty">Never fetched — click Refresh to check</span>`;
+        }
+        const status = meta.last_status || "ok";
+        const cls = status === "error"     ? "pill-bad"
+                  : status === "unchanged" ? "pill-muted"
+                  :                          "pill-ok";
+        const parts = [];
+        parts.push(`<span class="pill ${cls}">${escapeHTML(status)}</span>`);
+        parts.push(`<span class="meta-time">${escapeHTML(relativeTime(meta.last_fetched_at))}</span>`);
+        if (meta.last_bytes) {
+            parts.push(`<span class="meta-bytes">${formatBytes(meta.last_bytes)}</span>`);
+        }
+        if (meta.last_lines) {
+            parts.push(`<span class="meta-lines">${meta.last_lines} <code>vless://</code></span>`);
+        }
+        if (meta.content_hash) {
+            const changed = meta.prev_content_hash && meta.prev_content_hash !== meta.content_hash;
+            const hashCls = changed ? "meta-hash-changed" : "meta-hash";
+            const label = changed ? "changed" : "same";
+            parts.push(`<span class="${hashCls}" title="hash ${meta.content_hash}${meta.prev_content_hash ? ' (was ' + meta.prev_content_hash + ')' : ''}">${meta.content_hash.slice(0,8)} (${label})</span>`);
+        }
+        if (meta.http_last_modified) {
+            parts.push(`<span class="meta-lastmod" title="HTTP Last-Modified header from origin">origin: ${escapeHTML(meta.http_last_modified)}</span>`);
+        }
+        if (meta.last_error) {
+            parts.push(`<span class="meta-error" title="${escapeHTML(meta.last_error)}">${escapeHTML(meta.last_error.slice(0,80))}</span>`);
+        }
+        return parts.join(" · ");
+    }
+
+    // relativeTime returns "5 min ago" / "2h ago" / "3d ago" for an
+    // RFC3339 timestamp. Falls back to the raw string if unparseable.
+    function relativeTime(iso) {
+        const t = Date.parse(iso);
+        if (!t) return iso;
+        const delta = Math.max(0, Math.floor((Date.now() - t) / 1000));
+        if (delta < 60)    return `${delta}s ago`;
+        if (delta < 3600)  return `${Math.floor(delta / 60)}m ago`;
+        if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+        return `${Math.floor(delta / 86400)}d ago`;
+    }
+
+    function formatBytes(n) {
+        if (n < 1024)        return n + " B";
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+        return (n / 1024 / 1024).toFixed(2) + " MB";
     }
 
     // scoutCleanName strips Persian/Arabic ad spam and channel @-handles

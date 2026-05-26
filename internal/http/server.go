@@ -82,6 +82,7 @@ func (s *Server) Handler() nethttp.Handler {
 	// VPN Scout: sources + scan orchestration
 	mux.HandleFunc("GET /api/sources", s.handleSourcesList)
 	mux.HandleFunc("POST /api/sources", s.handleSourcesAdd)
+	mux.HandleFunc("POST /api/sources/refresh", s.handleSourcesRefresh)
 	mux.HandleFunc("PATCH /api/sources/{id}", s.handleSourcesUpdate)
 	mux.HandleFunc("DELETE /api/sources/{id}", s.handleSourcesDelete)
 	mux.HandleFunc("POST /api/scan/start", s.handleScanStart)
