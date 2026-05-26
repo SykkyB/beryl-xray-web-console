@@ -936,17 +936,51 @@
             });
         },
 
-        openAddModal(e, country, flag) {
+        async openAddModal(e, country, flag) {
             scout.currentEntry = e;
             $("#modal-server").textContent = (e.server || "") + ":" + (e.port || "");
             $("#modal-transport").textContent = e.transport + "+" + e.security;
             const lat = e.deep_ms || e.tls_ms || e.tcp_ms;
             $("#modal-latency").textContent = lat ? lat + "ms" : "—";
             $("#modal-country").textContent = (flag ? flag + " " : "") + (country || "Unknown");
-            // Auto-suggest: "🇩🇪 example.com" — cleaner than the raw fragment.
-            const suggested = (flag ? flag + " " : "") + (e.server || scoutCleanName(e.name) || "vless");
-            $("#modal-name").value = suggested.trim();
+
+            // Auto-suggest in the format: "🇩🇪 DE-3 (104.238.69.138)".
+            // Index is the next free integer for that country across
+            // the user's existing profiles, so back-to-back imports
+            // never collide and a glance at the list shows how many
+            // you have per region.
+            const idx = await scout.nextCountryIndex(country);
+            const cc = country || "XX";
+            const ipPart = scoutShortAddr(e.server) || scoutCleanName(e.name) || "?";
+            const flagPrefix = flag ? flag + " " : "🌍 ";
+            $("#modal-name").value = `${flagPrefix}${cc}-${idx} (${ipPart})`;
             $("#add-profile-modal").hidden = false;
+        },
+
+        // nextCountryIndex re-fetches profiles and finds the next free
+        // integer N for "<flag>? CC-N" naming. Uses regex tolerant of
+        // arbitrary flag prefix / spaces / trailing parenthetical so
+        // it matches manually-renamed profiles too.
+        async nextCountryIndex(country) {
+            const cc = country || "XX";
+            try {
+                const r = await fetch("/api/profiles", { credentials: "same-origin" });
+                if (!r.ok) return 1;
+                const data = await r.json();
+                const profiles = data.profiles || data || [];
+                const re = new RegExp(`\\b${cc}-(\\d+)\\b`);
+                let maxN = 0;
+                for (const p of profiles) {
+                    const m = (p.name || "").match(re);
+                    if (m) {
+                        const n = parseInt(m[1], 10);
+                        if (n > maxN) maxN = n;
+                    }
+                }
+                return maxN + 1;
+            } catch (err) {
+                return 1; // fail-open: 1 is fine; user can edit before confirming
+            }
         },
 
         async submitAdd() {
@@ -1032,6 +1066,21 @@
         if (n < 1024)        return n + " B";
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
         return (n / 1024 / 1024).toFixed(2) + " MB";
+    }
+
+    // scoutShortAddr returns a compact server-identifying string for
+    // the profile-name parenthetical. Plain IPs pass through; long
+    // hostnames are truncated to keep names under ~50 chars total.
+    function scoutShortAddr(server) {
+        if (!server) return "";
+        if (server.length <= 24) return server;
+        // Keep the eTLD+1-ish suffix where it likely lives.
+        const parts = server.split(".");
+        if (parts.length >= 2) {
+            const tail = parts.slice(-2).join(".");
+            if (tail.length <= 24) return "…" + tail;
+        }
+        return server.slice(0, 21) + "…";
     }
 
     // scoutCleanName strips Persian/Arabic ad spam and channel @-handles
