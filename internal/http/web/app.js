@@ -11,7 +11,6 @@
     const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
     const cell      = (key) => $(`[data-key="${key}"]`);
-    const toggleBtn = (name) => $(`button[data-toggle="${name}"]`);
     const actionResult = $("#action-result");
 
     function setPill(el, cls, text) {
@@ -41,18 +40,9 @@
         actionResult.className = "action-result " + (ok ? "action-ok" : "action-bad");
     }
 
-    function setToggleVisual(name, on) {
-        const btn = toggleBtn(name);
-        if (!btn) return;
-        btn.dataset.state = on ? "on" : "off";
-        btn.textContent = on ? "ON" : "OFF";
-    }
-
     // updateServiceGating disables Start/Restart/Reload when bind_switch
     // is ON and the physical switch is OFF, since the backend will
-    // refuse those actions with 409 anyway. Stop is never gated. The
-    // bind hint swaps to a state-aware version explaining what's
-    // blocking the buttons.
+    // refuse those actions with 409 anyway. Stop is never gated.
     function updateServiceGating(bindOn, physState) {
         const blocked = bindOn && physState === "off";
         const gated = ["start", "restart", "reload"];
@@ -61,20 +51,8 @@
             if (!b) continue;
             b.disabled = blocked;
             b.title = blocked
-                ? "Disabled: bind_switch is ON and the side switch is OFF — flip it ON, or turn off auto-follow"
+                ? "Disabled: Side switch is ON but the physical toggle is OFF — flip it ON, or release Side switch from the VPN Dashboard."
                 : "";
-        }
-        const hint = document.querySelector('[data-hint="bind"]');
-        if (hint) {
-            if (bindOn) {
-                hint.textContent = physState === "on"
-                    ? "Auto-follow is ON, side switch is ON — sing-box runs while the switch stays ON. Flip it OFF to stop the tunnel without touching the panel."
-                    : physState === "off"
-                    ? "Auto-follow is ON, side switch is OFF — sing-box stays stopped. Manual Start/Restart/Reload are blocked; flip the switch ON, or turn off auto-follow first."
-                    : "Auto-follow is ON. The hardware switch position couldn't be read — falling back to manual mode.";
-            } else {
-                hint.textContent = "When on, sing-box follows the GL.iNet hardware mode switch on the side of the router (ON = start, OFF = stop), and the manual buttons above are gated on the switch position. Acts like the native WG / OVPN binding.";
-            }
         }
     }
 
@@ -114,30 +92,27 @@
             renderBlock(cell("active_profile"), s.active_profile, (v) =>
                 v && v.name ? { cls: "pill-ok", text: v.name } : { cls: "pill-muted", text: "none" });
 
-            // killswitch_label is the inline text inside the
-            // killswitch strip ("On" / "Off") — pairs with the toggle
-            // button so the descriptive sentence reads naturally.
-            const ksOn = !!(s.killswitch && s.killswitch.ok && s.killswitch.value);
-            const ksLabel = document.querySelector('[data-key="killswitch_label"]');
-            if (ksLabel) ksLabel.textContent = ksOn ? "On" : "Off";
-
             renderBlock(cell("physical_switch"), s.physical_switch, (v) =>
                 v === "on"  ? { cls: "pill-ok",    text: "ON" } :
                 v === "off" ? { cls: "pill-muted", text: "OFF" } :
                               { cls: "pill-warn",  text: v || "unknown" });
 
-            $("#generated-at").textContent = "Updated: " + formatTime(s.generated_at);
+            // Killswitch + Side switch are now read-only status lamps —
+            // the actual controls live in the GL.iNet VPN Dashboard's
+            // XRAY card (Kill Switch tag + Side switch selector).
+            renderBlock(cell("killswitch"), s.killswitch, (v) =>
+                v ? { cls: "pill-warn", text: "ON" } : { cls: "pill-muted", text: "OFF" });
+            renderBlock(cell("bind_switch"), s.bind_switch, (v) =>
+                v ? { cls: "pill-ok", text: "ON" } : { cls: "pill-muted", text: "OFF" });
 
-            if (s.killswitch && s.killswitch.ok) setToggleVisual("killswitch", !!s.killswitch.value);
-            if (s.bind_switch && s.bind_switch.ok) setToggleVisual("bind_switch", !!s.bind_switch.value);
+            $("#generated-at").textContent = "Updated: " + formatTime(s.generated_at);
 
             // Gate Start/Restart/Reload when bind=ON and the physical
             // switch is OFF — the panel's POST /api/service would
             // return 409 anyway (matching the init script's refusal),
             // and showing buttons disabled rather than letting the
             // user click into an error is friendlier. Stop is never
-            // gated. The hint underneath the action row swaps to a
-            // bind-aware version so the reason is obvious.
+            // gated.
             const bindOn = !!(s.bind_switch && s.bind_switch.ok && s.bind_switch.value);
             const phys   = s.physical_switch && s.physical_switch.ok ? s.physical_switch.value : null;
             updateServiceGating(bindOn, phys);
@@ -162,21 +137,6 @@
         const before = btn.disabled;
         btn.disabled = true;
         try { await fn(); } finally { btn.disabled = before; }
-    }
-
-    function bindToggle(name, label) {
-        const btn = toggleBtn(name);
-        if (!btn) return;
-        btn.addEventListener("click", () => setBusy(btn, async () => {
-            const desired = btn.dataset.state !== "on";
-            try {
-                await postJSON("/api/" + name, { on: desired });
-                setActionResult(label + " → " + (desired ? "ON" : "OFF"), true);
-                await fetchState();
-            } catch (err) {
-                setActionResult(label + " failed: " + err.message, false);
-            }
-        }));
     }
 
     function bindAction(btn) {
@@ -631,8 +591,9 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-        bindToggle("killswitch",  "Killswitch");
-        bindToggle("bind_switch", "Bind switch");
+        // Killswitch + bind_switch toggles removed — those are now
+        // managed from the GL.iNet VPN Dashboard XRAY card. This panel
+        // shows their state as read-only pills in the header status row.
         $$("button.btn-action").forEach((b) => {
             if (b.dataset.action) bindAction(b);
         });

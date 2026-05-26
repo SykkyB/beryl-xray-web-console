@@ -229,7 +229,6 @@ main {
 /* ── buttons ─────────────────────────────────────────────────────────── */
 
 .btn-action,
-.btn-toggle,
 .btn-ghost {
     background: var(--bg-elev);
     color: var(--text);
@@ -242,34 +241,16 @@ main {
     transition: background 100ms ease, border-color 100ms ease, transform 50ms ease;
 }
 .btn-action:hover,
-.btn-toggle:hover,
 .btn-ghost:hover {
     background: #1b2c47;
     border-color: #2c4773;
 }
 .btn-action:active,
-.btn-toggle:active,
 .btn-ghost:active {
     transform: translateY(1px);
 }
 
-.btn-toggle {
-    min-width: 88px;
-    text-align: center;
-    letter-spacing: 0.3px;
-}
-.btn-toggle[data-state="on"] {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-fg);
-}
-.btn-toggle[data-state="on"]:hover {
-    background: #2563eb;
-    border-color: #2563eb;
-}
-
 .btn-action[disabled],
-.btn-toggle[disabled],
 .btn-ghost[disabled] {
     opacity: 0.5;
     cursor: not-allowed;
@@ -304,86 +285,19 @@ main {
     background: var(--bg-elev);
 }
 
-/* ── Sing-box card: 2-col Manual + Bind grid, killswitch as inline strip ── */
+/* ── Sing-box card body: Manual control row + hint ──────────────────── */
 
-.svc-grid {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 14px;
-}
-@media (max-width: 720px) {
-    .svc-grid { grid-template-columns: 1fr; }
-}
-
-.svc-cell {
-    border: 1px solid var(--border-soft);
-    border-radius: 6px;
-    padding: 12px 14px;
-    background: var(--bg-elev);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-.svc-cell h3 {
-    margin: 0;
+[data-card="service"] .card-body h3 {
+    margin: 0 0 10px;
     font-size: 12.5px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-muted);
 }
-
-/* Bind aside: small inline toggle line + hint, sized to fit the slim col. */
-.bind-aside {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.bind-toggle-line {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    font-size: 13px;
-    color: var(--text);
-    font-weight: 500;
-}
-
-/* Killswitch as one-line strip below the grid: pill label, descriptive
-   text (current state in bold), toggle on the right. */
-.killswitch-strip {
-    margin-top: 14px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    background: var(--bg-elev);
-    border: 1px solid var(--border-soft);
-    border-radius: 6px;
-}
-.killswitch-strip .ks-pill {
-    flex: 0 0 auto;
-}
-.killswitch-strip .ks-text {
-    flex: 1 1 auto;
-    font-size: 12.5px;
+[data-card="service"] .card-body small {
     color: var(--text-dim);
-    line-height: 1.4;
-    min-width: 0;
-}
-.killswitch-strip .ks-text strong {
-    color: var(--text);
-    font-weight: 600;
-}
-.killswitch-strip .btn-toggle {
-    flex: 0 0 auto;
-}
-@media (max-width: 560px) {
-    .killswitch-strip {
-        flex-wrap: wrap;
-    }
-    .killswitch-strip .ks-text { flex-basis: 100%; order: 2; }
-    .killswitch-strip .btn-toggle { margin-left: auto; }
+    font-size: 12px;
 }
 
 .btn-ghost {
@@ -706,13 +620,11 @@ code {
     /* iOS HIG: minimum tap target is 44x44pt. Bump padding so even the
        smallest button hits that. */
     .btn-action,
-    .btn-toggle,
     .btn-ghost {
         min-height: 44px;
         padding: 10px 16px;
         font-size: 14px;
     }
-    .btn-toggle { min-width: 96px; }
 
     /* Sing-box: 4 actions × full row each is a lot of scroll. Use a
        2-column grid that collapses to 1 column on the very narrow. */
@@ -722,17 +634,6 @@ code {
         gap: 8px;
     }
     [data-card="service"] .action-row .btn-action { width: 100%; }
-
-    /* Toggles take full row width on phones for big easy tap. */
-    [data-card="killswitch"] .action-row,
-    [data-card="bind"] .action-row {
-        flex-direction: column;
-        align-items: stretch;
-    }
-    [data-card="killswitch"] .btn-toggle,
-    [data-card="bind"] .btn-toggle {
-        width: 100%;
-    }
 
     .hint { font-size: 13px; }
 }

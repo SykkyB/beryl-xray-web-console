@@ -51,45 +51,34 @@
                             <span data-key="enabled" class="pill pill-muted">…</span>
                         </span>
                         <span class="status-item">
-                            <span class="status-label">Side switch</span>
+                            <span class="status-label">Phys. switch</span>
                             <span data-key="physical_switch" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Side switch</span>
+                            <span data-key="bind_switch" class="pill pill-muted">…</span>
+                        </span>
+                        <span class="status-item">
+                            <span class="status-label">Killswitch</span>
+                            <span data-key="killswitch" class="pill pill-muted">…</span>
                         </span>
                     </div>
                 </div>
                 <div class="card-body">
 
-                    <div class="svc-grid">
-                        <div class="svc-cell">
-                            <h3>Manual control</h3>
-                            <div class="action-row" data-row="manual">
-                                <button class="btn-action" data-action="start">Start</button>
-                                <button class="btn-action" data-action="stop">Stop</button>
-                                <button class="btn-action" data-action="restart">Restart</button>
-                                <button class="btn-action" data-action="reload">Reload</button>
-                            </div>
-                            <p class="hint" data-hint="manual">Start, stop, or hot-reload the sing-box VPN client. <em>Reload</em> validates the config and re-applies it without losing the tunnel for long.</p>
-                        </div>
-
-                        <div class="svc-cell">
-                            <h3>Bind</h3>
-                            <div class="bind-aside">
-                                <label class="bind-toggle-line">
-                                    <span>Auto-follow</span>
-                                    <button class="btn-toggle" data-toggle="bind_switch" data-state="off">…</button>
-                                </label>
-                                <p class="hint" data-hint="bind">When on, sing-box follows the GL.iNet hardware mode switch on the side of the router (ON = start, OFF = stop). Acts like the native WG / OVPN binding.</p>
-                            </div>
-                        </div>
+                    <h3>Manual control</h3>
+                    <div class="action-row" data-row="manual">
+                        <button class="btn-action" data-action="start">Start</button>
+                        <button class="btn-action" data-action="stop">Stop</button>
+                        <button class="btn-action" data-action="restart">Restart</button>
+                        <button class="btn-action" data-action="reload">Reload</button>
                     </div>
-
-                    <div class="killswitch-strip">
-                        <span class="pill pill-muted ks-pill">Killswitch</span>
-                        <div class="ks-text">
-                            <strong data-key="killswitch_label">…</strong>
-                            — when the tunnel goes down, LAN traffic is blackholed instead of falling back to the direct WAN. Off by default — same behavior as GL.iNet's stock WG / OVPN clients.
-                        </div>
-                        <button class="btn-toggle" data-toggle="killswitch" data-state="off">…</button>
-                    </div>
+                    <p class="hint" data-hint="manual">
+                        Start, stop, or hot-reload the sing-box VPN client.
+                        <em>Reload</em> validates the config and re-applies it without losing the tunnel for long.
+                        <br>
+                        <small>Side switch (bind to physical toggle) and Killswitch are managed from the GL.iNet VPN Dashboard — this panel shows their state as read-only indicators above.</small>
+                    </p>
 
                 </div>
             </section>
