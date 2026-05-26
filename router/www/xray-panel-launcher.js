@@ -1877,6 +1877,26 @@
                           : apiFetch("/api/profiles").then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })),
             liveFetch
         ]).then(function (vals) {
+            // Detect active-profile change to invalidate browserExitIP.
+            // When the user activates a different profile, the previous
+            // value is stale by definition — force an immediate re-fetch
+            // by zeroing the dedup timestamp.
+            var newActiveID = vals[0] && vals[0].active_profile && vals[0].active_profile.value && vals[0].active_profile.value.id;
+            var newRunning  = vals[0] && vals[0].service        && vals[0].service.value === true;
+            if (newActiveID && newActiveID !== lastActiveID) {
+                browserExitIP   = "";
+                browserExitIPAt = 0;
+                lastActiveID    = newActiveID;
+            }
+            // Service flip true↔false also invalidates: stopping the
+            // tunnel routes traffic via WAN, so the next ipify hit
+            // should reflect that.
+            if (lastServiceRunning !== null && newRunning !== lastServiceRunning) {
+                browserExitIP   = "";
+                browserExitIPAt = 0;
+            }
+            lastServiceRunning = newRunning;
+
             if (vals[0]) dashState = vals[0];
             if (vals[1]) dashProfiles = vals[1];
             if (vals[2] && vals[2].traffic && vals[2].traffic.ok && vals[2].traffic.value) {
@@ -1890,10 +1910,25 @@
                 // backend returns exit_ip.value as {ip, fetched_at, age_sec} —
                 // grab just the IP string, fall back to whatever's there
                 // if the shape was different.
+                //
+                // NOTE: the backend poller fetches via the router's default
+                // route (panel-originated traffic doesn't match the
+                // iif=br-lan rule), so this value reflects the ROUTER's WAN
+                // egress, not what LAN clients see through the tunnel. We
+                // overwrite it with browserExitIP below when the
+                // browser-side check has produced a result.
                 var ev = vals[2].exit_ip.value;
                 if (ev && typeof ev === "object") liveExitIP = ev.ip || "";
                 else liveExitIP = ev || "";
             }
+            // Prefer the browser-side check — the browser is on the LAN
+            // (192.168.200.x for beryl), so its packets do route via
+            // sing-tun. That makes the answer the "real" tunnel exit IP
+            // from the LAN-client point of view.
+            if (browserExitIP) liveExitIP = browserExitIP;
+            // Kick the browser-side fetch — internal 30s dedup keeps
+            // this cheap on every poll cycle.
+            if (window.fetch) refreshBrowserExitIP();
             // Two-way mutex: if a native VPN tunnel just came up while
             // our XRAY is also running, stop ours. Acts only on the
             // false→true transition so a steady-state "native up, ours
@@ -1912,6 +1947,48 @@
         });
     }
     var liveExitIP = "";
+    // browserExitIP is the IP api.ipify.org sees the BROWSER as. Because
+    // the browser is on beryl's LAN, its traffic routes via sing-tun when
+    // a tunnel is up — so this value reflects the actual user-facing exit
+    // IP, not the router's WAN egress.
+    var browserExitIP = "";
+    var browserExitIPAt = 0;
+    var lastActiveID = null;
+    var lastServiceRunning = null;
+    function refreshBrowserExitIP() {
+        // Stale check + de-dup: at most one fetch in flight, refresh
+        // every 30s. AbortController caps the wait so a hung tunnel
+        // doesn't pile up XHRs.
+        if (Date.now() - browserExitIPAt < 30000) return;
+        browserExitIPAt = Date.now();
+        var ctrl = (typeof AbortController === "function") ? new AbortController() : null;
+        var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 6000) : 0;
+        fetch("https://api.ipify.org?format=text", {
+            signal: ctrl ? ctrl.signal : undefined,
+            cache: "no-store",
+            referrerPolicy: "no-referrer",
+        }).then(function (r) {
+            if (timer) clearTimeout(timer);
+            if (!r.ok) return null;
+            return r.text();
+        }).then(function (txt) {
+            if (!txt) return;
+            txt = txt.trim();
+            // Tiny sanity check — IPv4 dotted or v6 colon-y
+            if (/^[0-9a-f.:]{3,}$/i.test(txt)) {
+                browserExitIP = txt;
+            }
+        }).catch(function () {
+            // Network error or abort. Don't clear cached value — the
+            // user keeps seeing the last successful answer until the
+            // next attempt succeeds.
+            if (timer) clearTimeout(timer);
+        });
+    }
+    // Kick off on load and then on every dashboard poll cycle. The
+    // 30s dedup inside refreshBrowserExitIP makes the per-poll call
+    // a near-noop except on the 30s boundary.
+    if (window.fetch) refreshBrowserExitIP();
 
     function stopDashTimer() {
         if (dashTimer) { clearInterval(dashTimer); dashTimer = null; }

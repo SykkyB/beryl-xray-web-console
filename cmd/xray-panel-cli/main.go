@@ -50,6 +50,15 @@ func main() {
 		Interval: 30 * time.Second,
 		Timeout:  8 * time.Second,
 	}
+	// Run the background ticker so the cache populates without
+	// requiring a user-action nudge. Each tick fires fetchOnce; the
+	// /api/live handler reads the latest Snapshot non-blockingly.
+	// Important note: the fetch traverses beryl's default route, NOT
+	// sing-tun (panel-originated traffic doesn't match the iif br-lan
+	// rule), so the value reflects the ROUTER's WAN egress, not what
+	// LAN clients see through the tunnel. For the LAN-clients view,
+	// the dashboard launcher does a separate browser-side ipify fetch.
+	exitIP.Start(context.Background())
 
 	srv := panelhttp.NewServer(panelhttp.Server{
 		Cfg: cfg,
