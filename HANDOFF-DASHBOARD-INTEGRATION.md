@@ -440,6 +440,7 @@ ssh beryl 'tail -f /var/log/sing-box.log'
 scp -O router/www/xray-panel-launcher.js beryl:/tmp/launcher-new.js && \
   ssh beryl '
     cp /tmp/launcher-new.js /www/xray-panel-launcher.js
+    rm -f /tmp/launcher-new.js
     H=$(md5sum /www/xray-panel-launcher.js | cut -c1-10)
     sed -i "s|src=\"/xray-panel-launcher.js[^\"]*\"|src=\"/xray-panel-launcher.js?v=${H}\"|" /www/gl_home.html
     echo deployed: v=$H
