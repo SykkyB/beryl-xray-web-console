@@ -133,6 +133,7 @@ func probeOneDeep(parent context.Context, e *Entry, singboxBin string, timeout t
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, singboxBin, "run", "-c", cfgPath)
+	setKillOnParentExit(cmd) // Linux: SIGKILL me when panel dies
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	cmd.Stdout = io.Discard

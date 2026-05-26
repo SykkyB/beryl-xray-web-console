@@ -289,8 +289,9 @@ open http://192.168.200.1:9092/                 # веб-панель
 | POST | `/api/profiles/{id}/activate` | render → sing-box check → write → uci commit → reload + clash close |
 | GET  | `/api/live` | exit IP, traffic rates, top flows |
 | GET  | `/api/logs?lines=N` | tail sing-box.log (default 100, max 1000) |
-| GET  | `/api/sources` | список источников для VPN Scout (пресеты + user-added) |
+| GET  | `/api/sources` | список источников + per-source meta (last fetch, status, bytes, lines, hash) |
 | POST | `/api/sources` | `{name, url\|path, enabled?}` — добавить источник |
+| POST | `/api/sources/refresh` | `{ids?}` — фетчит источники, обновляет meta. Без ids → все, включая disabled |
 | PATCH | `/api/sources/{id}` | `{name?, enabled?}` — переименовать / включить-выключить |
 | DELETE | `/api/sources/{id}` | удалить (user-added, пресеты только disable) |
 | POST | `/api/scan/start` | `{source_ids?, deep, max_deep, hard_timeout_s, skip_active}` → `{scan_id}` |
@@ -738,10 +739,12 @@ DONE in 47s — kept 11/30 (tcp_ok=30 tls_ok=28 vless_ok=11) → samples/raw.ali
 - [x] Рефакторинг `cmd/vless-vet` → `internal/vetlib/` (parse, probe, deep, pipeline) — переиспользуется панелью и CLI
 - [x] Country-detection: парсинг флаг-emoji из `#fragment` URL → ISO-2 → группа
 - [x] Sources management: `/api/sources` GET/POST/PATCH/DELETE с пресетами (kort0881) и user-added URL/path
+- [x] Per-source метаданные (`last_fetched_at`, `status`, `bytes`, `lines`, `content_hash`, `http_last_modified`) + per-source / global кнопки Refresh
 - [x] Scan orchestrator: `/api/scan/{start,status,results,cancel}` + `/api/scans/list`, in-memory state + JSON snapshots в `/etc/xray-panel-cli/scans/` (keep-last-5)
-- [x] Воронка parse → dedup → TCP → TLS → deep с лимитами (max-deep + hard-timeout)
+- [x] Воронка parse → dedup → TCP → TLS → deep с лимитами (max-deep + per-country round-robin + hard-timeout). `0` = no cap для max-deep / per-country
 - [x] Опция `skip_active` — паузить активный sing-box на время скана
-- [x] Фронт: новый таб **VPN Scout** со списком источников, scan-controls, прогресс-баром, результатами сгруппированными по странам, modal-предпросмотром перед Add
+- [x] Pdeathsig на spawned sing-box workers — деплой не оставляет orphan-процессов
+- [x] Фронт: новый таб **VPN Scout** со списком источников, scan-controls, прогресс-баром, результатами сгруппированными по странам, modal-предпросмотром перед Add с авто-форматом имени `🇩🇪 DE-1 (104.238.69.138)`
 
 ### Phase 6 — TODO
 - [ ] Симметричный апдейт для серверной стороны (`flint2-xray-web-console`)
