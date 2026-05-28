@@ -197,6 +197,7 @@
                             : `<button class="btn-action btn-primary" data-act="activate" data-id="${escapeHTML(p.id)}">Activate</button>`}
                         <button class="btn-action" data-act="test" data-id="${escapeHTML(p.id)}">Test</button>
                         <button class="btn-action" data-act="edit" data-id="${escapeHTML(p.id)}">Edit</button>
+                        <button class="btn-action" data-act="qr"   data-id="${escapeHTML(p.id)}" data-name="${escapeHTML(p.name)}">QR / Share</button>
                         ${p.active ? "" : `<button class="btn-action btn-danger"  data-act="delete"   data-id="${escapeHTML(p.id)}">Delete</button>`}
                     </div>
                 </li>
@@ -314,6 +315,12 @@
             await setBusy(btn, async () => {
                 await testProfile(id);
             });
+            return;
+        }
+        if (act === "qr") {
+            // No busy-spinner — modal opens immediately; QR image
+            // loads async via its own src attribute.
+            window.__openProfileQRModal(id, btn.dataset.name);
             return;
         }
         await setBusy(btn, async () => {
@@ -635,9 +642,28 @@
         // Modal interactions (live on the page from boot, so wire once).
         $("#modal-cancel").addEventListener("click", () => { $("#add-profile-modal").hidden = true; });
         $("#modal-confirm").addEventListener("click", () => scout.submitAdd());
+        $("#modal-copy-link").addEventListener("click", () => {
+            if (scout.currentEntry && scout.currentEntry.url) {
+                copyTextToClipboard(scout.currentEntry.url, "Link copied to clipboard");
+            }
+        });
         $("#add-source-form").addEventListener("submit", (e) => { e.preventDefault(); scout.addSource(e.target); });
         $("#scan-start-btn").addEventListener("click", () => scout.startScan());
         $("#scan-cancel-btn").addEventListener("click", () => scout.cancelScan());
+
+        // Profile QR modal (Control tab).
+        $("#pq-close").addEventListener("click", () => { $("#profile-qr-modal").hidden = true; });
+        $("#pq-copy").addEventListener("click", async () => {
+            const id = $("#profile-qr-modal").dataset.profileId;
+            if (!id) return;
+            try {
+                const r = await fetch(`/api/profiles/${encodeURIComponent(id)}/link`, { credentials: "same-origin" });
+                const data = await r.json();
+                copyTextToClipboard(data.url, "Link copied to clipboard");
+            } catch (err) {
+                setActionResult("Copy failed: " + err.message, false);
+            }
+        });
 
         fetchState();
         fetchProfiles();
@@ -958,6 +984,25 @@
             const ipPart = scoutShortAddr(e.server) || scoutCleanName(e.name) || "?";
             const flagPrefix = flag ? flag + " " : "🌍 ";
             $("#modal-name").value = `${flagPrefix}${cc}-${idx} (${ipPart})`;
+
+            // Load QR for the candidate's vless:// URL. POST avoids
+            // URL-length limits with long Reality keys + short IDs.
+            const qrImg = $("#modal-qr");
+            qrImg.removeAttribute("src");
+            try {
+                const r = await fetch("/api/qr", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({url: e.url, size: 320}),
+                });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const blob = await r.blob();
+                qrImg.src = URL.createObjectURL(blob);
+            } catch (err) {
+                qrImg.alt = "QR render failed: " + err.message;
+            }
+
             $("#add-profile-modal").hidden = false;
         },
 
@@ -1071,6 +1116,46 @@
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
         return (n / 1024 / 1024).toFixed(2) + " MB";
     }
+
+    // copyTextToClipboard uses the modern Clipboard API on secure
+    // contexts (HTTPS/localhost) and falls back to a hidden <textarea>
+    // + execCommand("copy") on http://192.168.x.x where the API is
+    // blocked. Surfaces success/failure via setActionResult.
+    async function copyTextToClipboard(text, okMsg) {
+        try {
+            if (window.isSecureContext && navigator.clipboard) {
+                await navigator.clipboard.writeText(text);
+                setActionResult(okMsg || "Copied to clipboard", true);
+                return;
+            }
+        } catch (_) { /* fall through to fallback */ }
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;top:-1000px;left:-1000px;opacity:0;";
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand("copy"); } catch (_) {}
+        document.body.removeChild(ta);
+        setActionResult(ok ? (okMsg || "Copied") : "Could not copy — select manually", ok);
+    }
+
+    // Opens the per-profile QR/share modal from the Control tab's
+    // Profiles list. Loads the PNG from /api/profiles/{id}/qr.png so
+    // the URL is never exposed in the address bar (vless:// contains
+    // the UUID, which is a credential).
+    function openProfileQRModal(id, name) {
+        const modal = $("#profile-qr-modal");
+        modal.dataset.profileId = id;
+        $("#pq-title").textContent = "Share — " + (name || "profile");
+        const img = $("#pq-qr");
+        img.removeAttribute("src");
+        img.src = `/api/profiles/${encodeURIComponent(id)}/qr.png?size=320`;
+        modal.hidden = false;
+    }
+    // Expose so profile-row delegation can reach it (delegation lives
+    // in the Profiles section which was wired before scout module load).
+    window.__openProfileQRModal = openProfileQRModal;
 
     // scoutShortAddr returns a compact server-identifying string for
     // the profile-name parenthetical. Plain IPs pass through; long

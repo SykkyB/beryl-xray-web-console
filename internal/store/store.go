@@ -48,6 +48,14 @@ type Profile struct {
 	// from Server when fronting through a CDN. Ignored when Type == "tcp".
 	Host string `json:"host,omitempty"`
 
+	// RawURL is the original vless:// link as imported. Stored
+	// verbatim so QR generation + clipboard share are byte-identical
+	// to what the user pasted (URL-encoded paths, exact fragment
+	// name, etc.). Legacy profiles imported before this field existed
+	// have RawURL == ""; the QR handler falls back to BuildURL for
+	// those.
+	RawURL string `json:"raw_url,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

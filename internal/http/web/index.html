@@ -265,24 +265,60 @@
         <p id="action-result" class="action-result"></p>
     </main>
 
-    <!-- Add-to-profiles modal (hidden by default) -->
+    <!-- Use-this-server modal (hidden by default) — opens from Scout
+         results "+ Add" button, offers three ways to use the picked
+         server: scan QR with phone, copy link, add to router profiles -->
     <div id="add-profile-modal" class="modal" hidden>
         <div class="modal-backdrop"></div>
         <div class="modal-content">
-            <h3>Import profile</h3>
+            <h3>Use this server</h3>
             <div class="modal-preview">
                 <div><strong>Server</strong> <span id="modal-server">—</span></div>
                 <div><strong>Transport</strong> <span id="modal-transport">—</span></div>
                 <div><strong>Latency</strong> <span id="modal-latency">—</span></div>
                 <div><strong>Country</strong> <span id="modal-country">—</span></div>
             </div>
+
+            <div class="modal-share">
+                <div class="modal-qr-wrap">
+                    <img id="modal-qr" alt="QR code for vless:// link" loading="lazy">
+                </div>
+                <div class="modal-share-actions">
+                    <p class="hint">Scan the QR with your phone's VPN client (V2RayNG, Streisand, FoXray, etc.), or copy the link to paste elsewhere.</p>
+                    <button class="btn-ghost" id="modal-copy-link">Copy vless:// link</button>
+                </div>
+            </div>
+
+            <hr class="modal-sep">
+
             <label class="modal-name">
-                <span>Profile name</span>
+                <span>Add to this router's profiles as</span>
                 <input type="text" id="modal-name">
             </label>
             <div class="modal-buttons">
-                <button class="btn-ghost" id="modal-cancel">Cancel</button>
+                <button class="btn-ghost" id="modal-cancel">Close</button>
                 <button class="btn-action" id="modal-confirm">Add to profiles</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile QR/share modal (separate from Add modal — opens from
+         the QR button in the Profiles tab on the Control pane) -->
+    <div id="profile-qr-modal" class="modal" hidden>
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h3 id="pq-title">Share profile</h3>
+            <div class="modal-share">
+                <div class="modal-qr-wrap">
+                    <img id="pq-qr" alt="QR code for vless:// link" loading="lazy">
+                </div>
+                <div class="modal-share-actions">
+                    <p class="hint">Scan with a VLESS-compatible mobile client, or copy the link.</p>
+                    <button class="btn-ghost" id="pq-copy">Copy vless:// link</button>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn-ghost" id="pq-close">Close</button>
             </div>
         </div>
     </div>

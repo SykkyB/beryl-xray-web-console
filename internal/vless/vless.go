@@ -18,6 +18,88 @@ import (
 	"strings"
 )
 
+// BuildURL reconstructs a vless:// link from the URL fields. Used as
+// a fallback for legacy profiles imported before RawURL was stored on
+// disk — building from parsed fields is approximate (param ordering,
+// case, URL-encoded fragments may not be byte-identical to the
+// original), but the result is still a valid VLESS link any client
+// will accept.
+//
+// Skips empty values and writes parameters in a deterministic order so
+// the result is stable across calls.
+func BuildURL(u URL) string {
+	var sb strings.Builder
+	sb.WriteString("vless://")
+	sb.WriteString(u.UUID)
+	sb.WriteByte('@')
+	sb.WriteString(u.Server)
+	sb.WriteByte(':')
+	sb.WriteString(itoa(u.Port))
+
+	// Param order mirrors what most clients emit: security, encryption,
+	// flow, pbk, fp, sni, sid, spx, type, host, path. (encryption is
+	// always "none" for VLESS; include it for parity with stock outputs.)
+	type kv struct{ k, v string }
+	params := []kv{
+		{"security", u.Security},
+		{"encryption", "none"},
+		{"flow", u.Flow},
+		{"pbk", u.PublicKey},
+		{"fp", u.Fingerprint},
+		{"sni", u.SNI},
+		{"sid", u.ShortID},
+		{"type", u.Type},
+		{"host", u.Host},
+		{"path", u.Path},
+	}
+	first := true
+	for _, p := range params {
+		if p.v == "" {
+			continue
+		}
+		if first {
+			sb.WriteByte('?')
+			first = false
+		} else {
+			sb.WriteByte('&')
+		}
+		sb.WriteString(p.k)
+		sb.WriteByte('=')
+		// Light URL-escape: only escape the few chars that genuinely
+		// break parsers (& # space). Most VLESS clients tolerate the
+		// rest verbatim, and over-escaping makes the QR longer.
+		sb.WriteString(strings.NewReplacer("&", "%26", "#", "%23", " ", "%20").Replace(p.v))
+	}
+	if u.Name != "" {
+		sb.WriteByte('#')
+		sb.WriteString(strings.NewReplacer(" ", "%20", "#", "%23").Replace(u.Name))
+	}
+	return sb.String()
+}
+
+func itoa(n int) string {
+	// Avoid strconv import just for this one place.
+	if n == 0 {
+		return "0"
+	}
+	var b [12]byte
+	pos := len(b)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		pos--
+		b[pos] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		pos--
+		b[pos] = '-'
+	}
+	return string(b[pos:])
+}
+
 // URL is the result of parsing a vless:// link.
 type URL struct {
 	UUID        string

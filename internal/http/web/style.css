@@ -921,6 +921,53 @@ code {
     gap: 8px;
 }
 
+/* ── QR / share block inside Add and Profile-QR modals ───────────── */
+.modal-share {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    align-items: center;
+    margin: 14px 0;
+}
+.modal-qr-wrap {
+    flex: 0 0 auto;
+    background: #fff;
+    border-radius: 6px;
+    padding: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.modal-qr-wrap img {
+    display: block;
+    width: 160px;
+    height: 160px;
+}
+.modal-share-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.modal-share-actions .hint {
+    font-size: 12px;
+    margin: 0;
+}
+.modal-sep {
+    border: none;
+    border-top: 1px solid var(--border-soft);
+    margin: 6px 0 14px;
+}
+
+@media (max-width: 520px) {
+    .modal-share {
+        grid-template-columns: 1fr;
+        justify-items: center;
+        text-align: center;
+    }
+    .modal-qr-wrap img { width: 200px; height: 200px; }
+}
+
 @media (max-width: 720px) {
     .source-row,
     .add-source-form {

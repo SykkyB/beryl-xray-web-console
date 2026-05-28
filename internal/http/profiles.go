@@ -177,6 +177,12 @@ func (s *Server) handleProfilesImportVless(w nethttp.ResponseWriter, r *nethttp.
 		Security:    parsed.Security,
 		Path:        parsed.Path,
 		Host:        parsed.Host,
+		// Keep the original line so QR / clipboard share are
+		// byte-identical to what the user pasted (URL-encoded
+		// fragment name, exact param order, etc.). Without this,
+		// rebuilding from fields is approximate and other clients
+		// sometimes choke on subtle differences.
+		RawURL: req.URL,
 	}
 	if err := s.Profiles.Add(prof); err != nil {
 		writeErr(w, nethttp.StatusInternalServerError, fmt.Errorf("save: %w", err))
