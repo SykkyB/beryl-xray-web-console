@@ -76,6 +76,25 @@ start_service() {
 	[ "$sw_func" = "xray" ] && bound=1
 	[ "$bind_sw" = "1" ] && bound=1
 
+	# Boot-time gate (Phase 5d-fix): if Side switch is NOT claimed for
+	# XRAY, refuse to autostart at boot. Stock vpn-client will bring
+	# wgclient1 / ovpnclient1 up per route_policy and own LAN routing
+	# uncontested — matching what the user sees in the dashboard's
+	# Side switch selector position ("WireGuard VPN" side).
+	#
+	# Runtime UI starts (POST /api/service start from a dashboard
+	# click) still work even with bind_switch=0; we differentiate via
+	# uptime — procd fires this within the first ~30s of boot, UI
+	# clicks happen well after the 120s gate.
+	if [ "$bound" != "1" ]; then
+		local uptime_s
+		uptime_s=$(awk '{printf "%d", $1}' /proc/uptime 2>/dev/null)
+		if [ "${uptime_s:-9999}" -lt 120 ]; then
+			logger -t sing-box "boot gate: Side switch not bound to XRAY (bind_switch=$bind_sw func=$sw_func) — not starting at boot"
+			return 1
+		fi
+	fi
+
 	if [ "$bound" = "1" ] && [ -r /lib/functions/gl_util.sh ]; then
 		sw_status=$(. /lib/functions/gl_util.sh; get_switch_button_status 2>/dev/null)
 		[ "$sw_status" = "off" ] && {
@@ -88,19 +107,20 @@ start_service() {
 	[ ! -f "$CONFIG" ] && return 1
 	"$PROG" check -c "$CONFIG" || return 1
 
-	# Boot-time mutex (Phase 5d) — mirror the runtime mutex done by the
-	# panel's POST /api/service start. Without this, after a reboot
-	# procd starts both us AND stock vpn-client (which brings up
-	# wgclient1/ovpnclient1 based on route_policy.@rule[N].enabled=1).
-	# Functionally XRAY wins LAN routing via ip rule prio 5000, but
-	# native VPN burns CPU/bandwidth as dead weight, and shows up in
-	# the dashboard as a second "UP" tunnel.
+	# Boot-time mutex (Phase 5d) — fires ONLY when the user has bound
+	# XRAY to the Side switch (bind_switch=1 or func=xray). Without
+	# the bound gate, we used to kill native unconditionally; the user
+	# saw WG go down even when they'd set Side switch = "WireGuard VPN"
+	# expecting WG to win.
 	#
 	# Records what we disabled in sing-box.config.native_vpn_disabled
 	# so /api/native-vpn/restore (called when the user clicks XRAY OFF
-	# in the dashboard) puts it back exactly as it was.
-	stop_native_vpns
-	apply_native_disabled_memo
+	# in the dashboard, or via Side-switch → WireGuard) puts it back
+	# exactly as it was.
+	if [ "$bound" = "1" ]; then
+		stop_native_vpns
+		apply_native_disabled_memo
+	fi
 
 	procd_open_instance "sing-box"
 	procd_set_param command "$PROG" -D "$CONFIG_DIR" run -c "$CONFIG"
