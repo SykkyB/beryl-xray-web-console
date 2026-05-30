@@ -1063,6 +1063,27 @@
         // Track our rows by data-xray-extra="<key>"; remove any first.
         var existing = ul.querySelectorAll("[data-xray-extra]");
         existing.forEach(function (n) { n.remove(); });
+        // The card was cloned from the stock WG/OVPN card, which means
+        // it's still attached to Vue's reactive scope for that
+        // component. When the native tunnel is also UP (e.g. right
+        // after a fresh boot before the boot-mutex tears it down),
+        // Vue re-injects WG's connected-state rows (Server Address,
+        // Server Listen Port, Virtual IP, …) into our <ul>. The clone-
+        // time strip in the card builder only ran once; we have to
+        // re-strip on every poll to keep our card uncontaminated.
+        //
+        // Keep .title-li (header), and the row containing .file-info
+        // (profile picker). Remove everything else — our own rows are
+        // re-added below from `data-xray-extra`.
+        for (var li = ul.firstElementChild; li; ) {
+            var next = li.nextElementSibling;
+            if (!li.classList.contains("title-li") &&
+                !li.querySelector(".file-info") &&
+                !li.hasAttribute("data-xray-extra")) {
+                li.remove();
+            }
+            li = next;
+        }
         if (!running) return;
 
         var ap = dashState && dashState.active_profile && dashState.active_profile.value;

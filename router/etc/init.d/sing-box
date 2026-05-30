@@ -88,6 +88,20 @@ start_service() {
 	[ ! -f "$CONFIG" ] && return 1
 	"$PROG" check -c "$CONFIG" || return 1
 
+	# Boot-time mutex (Phase 5d) — mirror the runtime mutex done by the
+	# panel's POST /api/service start. Without this, after a reboot
+	# procd starts both us AND stock vpn-client (which brings up
+	# wgclient1/ovpnclient1 based on route_policy.@rule[N].enabled=1).
+	# Functionally XRAY wins LAN routing via ip rule prio 5000, but
+	# native VPN burns CPU/bandwidth as dead weight, and shows up in
+	# the dashboard as a second "UP" tunnel.
+	#
+	# Records what we disabled in sing-box.config.native_vpn_disabled
+	# so /api/native-vpn/restore (called when the user clicks XRAY OFF
+	# in the dashboard) puts it back exactly as it was.
+	stop_native_vpns
+	apply_native_disabled_memo
+
 	procd_open_instance "sing-box"
 	procd_set_param command "$PROG" -D "$CONFIG_DIR" run -c "$CONFIG"
 	procd_set_param respawn 3600 5 5
@@ -99,6 +113,47 @@ start_service() {
 
 	apply_lan_routing
 	apply_killswitch_state
+}
+
+# stop_native_vpns iterates UCI route_policy and disables any
+# wireguard/openvpn rule that is currently enabled. Same algorithm as
+# internal/http/native_vpn.go stopNativeVPN — keep behaviour identical
+# so a reboot-time stop and a runtime stop produce the same UCI state.
+# Idempotent: no-op when nothing native is enabled.
+NATIVE_DISABLED=""
+stop_native_vpns() {
+	NATIVE_DISABLED=""
+	local sections rule via_type ena
+	sections=$(uci -q show route_policy 2>/dev/null | awk -F'[.=]' '/\.enabled=/{print $1"."$2}' | sort -u)
+	for rule in $sections; do
+		via_type=$(uci -q get "${rule}.via_type" 2>/dev/null)
+		ena=$(uci -q get "${rule}.enabled" 2>/dev/null)
+		[ "$ena" = "1" ] || continue
+		case "$via_type" in
+			wireguard|openvpn)
+				uci -q set "${rule}.enabled=0"
+				NATIVE_DISABLED="${NATIVE_DISABLED}${NATIVE_DISABLED:+,}${rule}"
+				;;
+		esac
+	done
+	if [ -n "$NATIVE_DISABLED" ]; then
+		uci commit route_policy
+		# Restart vpn-client so it tears down ifaces we just disabled.
+		# Async + redirected so a slow restart can't stall sing-box start.
+		(/etc/init.d/vpn-client restart >/dev/null 2>&1 &)
+		logger -t sing-box "boot mutex: disabled native VPN rules [$NATIVE_DISABLED]"
+	fi
+}
+
+# apply_native_disabled_memo persists the boot-time mutex result so
+# /api/native-vpn/restore (called by XRAY OFF in the dashboard) can put
+# the rules back exactly as they were. Mirrors what stopNativeVPN does
+# in the HTTP handler. Skips when nothing was disabled this run AND a
+# prior memo already exists (don't clobber a runtime mutex state).
+apply_native_disabled_memo() {
+	[ -z "$NATIVE_DISABLED" ] && return
+	uci -q set "$UCI_CFG.config.native_vpn_disabled=$NATIVE_DISABLED"
+	uci commit "$UCI_CFG"
 }
 
 stop_service() {
