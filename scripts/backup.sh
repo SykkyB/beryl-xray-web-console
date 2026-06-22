@@ -54,6 +54,7 @@ PATHS=(
     /etc/openvpn
     /etc/wireguard                 # AmneziaWG obfuscation params (if enabled)
     /root
+    /usr/sbin/beryl-config-backup  # the router-side self-backup script itself
     # --- our deployment ---
     /usr/bin/sing-box
     /usr/bin/xray-panel-cli
