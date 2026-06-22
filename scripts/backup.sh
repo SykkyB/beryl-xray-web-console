@@ -5,12 +5,21 @@
 # backups/, named with the UTC timestamp; the directory is gitignored
 # because the contents include secrets (VLESS UUID, bcrypt hash).
 #
+# Scope widened 2026-06-22 (after the MT6000 4.9.0 reflash incident) to the
+# whole router config (/etc/config, AdGuard, /etc/xray, dropbear, crontab, ...),
+# so a clean flash is fully recoverable. Local snapshot stays plaintext under
+# backups/ (gitignored); the R2 mirror is AES-256 encrypted (secrets inside).
+# The router also self-backs-up the same scope weekly via /usr/sbin/beryl-config-backup.
+#
 # Usage:
 #   scripts/backup.sh [ssh-target]      # default: beryl
 #
-# Restore (from a fresh OpenWrt with same arch):
+# Restore (from a fresh OpenWrt, same arch — decrypt the R2 .enc first if
+# that's your source: openssl enc -d -aes-256-cbc -pbkdf2 -pass file:<pass> ...):
 #   scp -O backups/beryl-YYYYMMDD-HHMMSSZ.tar.gz beryl:/tmp/
-#   ssh beryl 'tar xzf /tmp/beryl-...tar.gz -C /'
+#   ssh beryl 'tar xzf /tmp/beryl-...tar.gz -C /'     # restores /etc/config etc.
+#   ssh beryl 'reboot'                                # apply UCI
+#   # then re-enable our services:
 #   ssh beryl '/etc/init.d/sing-box enable; /etc/init.d/sing-box start'
 #   ssh beryl '/etc/init.d/xray-panel-cli enable; /etc/init.d/xray-panel-cli start'
 
@@ -28,15 +37,27 @@ DEST="$DEST_DIR/beryl-$TS.tar.gz"
 # contents". Ordered roughly: binaries, sing-box runtime, init/hotplug,
 # panel runtime, sysctl.
 PATHS=(
+    # --- full router config (added 2026-06-22 after the MT6000 4.9.0 reflash
+    # incident: a clean firmware flash wipes everything not explicitly kept,
+    # so back up enough to fully restore — network/wifi/wireguard/firewall/
+    # adguard/xray/ssh/cron — not just our deployment). /etc/config includes
+    # sing-box and switch-button, so those are no longer listed separately.
+    /etc/config
+    /etc/AdGuardHome/config.yaml   # custom DNS rewrites/clients (out of /etc/config)
+    /etc/xray                      # xray config.json
+    /etc/dropbear                  # ssh host keys + authorized_keys
+    /etc/passwd
+    /etc/shadow
+    /etc/group
+    /etc/crontabs
+    /etc/rclone                    # R2 creds (needed to re-run backups)
+    /etc/openvpn
+    /etc/wireguard                 # AmneziaWG obfuscation params (if enabled)
+    /root
+    # --- our deployment ---
     /usr/bin/sing-box
     /usr/bin/xray-panel-cli
     /etc/sing-box
-    /etc/config/sing-box
-    # GL.iNet's physical-switch binding — Side switch (Phase 4) writes
-    # @main[0].func='xray' here. Restoring this preserves whether the
-    # switch was claimed by us at backup time; otherwise a restore would
-    # leave bind_switch=1 in sing-box but func='vpn' here → inconsistent.
-    /etc/config/switch-button
     /etc/init.d/sing-box
     /etc/init.d/xray-panel-cli
     /etc/hotplug.d/button/50-sing-box-switch
@@ -130,18 +151,29 @@ echo
 echo "--- First entries ---"
 tar tzf "$DEST" | head -25
 
-# Off-site mirror to Cloudflare R2.
-# Uses the rclone profile `r2` from ~/.config/rclone/rclone.conf.
-# If rclone or the profile is missing, skip silently with a notice — the
-# local snapshot is still on disk.
+# Off-site mirror to Cloudflare R2 — ENCRYPTED.
+# The local snapshot under backups/ stays plaintext (gitignored, on your Mac),
+# but the R2 copy is AES-256 encrypted because it now carries secrets (WG
+# private keys, ssh host keys, /etc/shadow). Pass is pulled from the router
+# (/etc/beryl-backup.pass == flint2 /etc/system-backup.pass, dup in 1Password).
+# Fail-closed: if the pass is missing or encryption fails, we do NOT upload.
 R2_REMOTE="r2:sys-lab-home-backups/beryl-snapshots"
+ENC="$DEST.enc"
+PASS_TMP="$(mktemp)"
+trap 'rm -f "$LOCAL_MANIFEST" "$PASS_TMP" "$ENC"' EXIT
 if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q '^r2:'; then
     echo
-    echo ">>> Uploading to $R2_REMOTE/"
-    if rclone copy --s3-no-head "$DEST" "$R2_REMOTE/"; then
-        echo ">>> R2 upload OK"
+    if ! ssh "$TARGET" 'cat /etc/beryl-backup.pass' > "$PASS_TMP" 2>/dev/null || [ ! -s "$PASS_TMP" ]; then
+        echo ">>> no /etc/beryl-backup.pass on $TARGET — skipping R2 (won't upload plaintext secrets)" >&2
+    elif ! openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$PASS_TMP" -in "$DEST" -out "$ENC"; then
+        echo ">>> encryption failed — skipping R2 (won't upload plaintext secrets)" >&2
     else
-        echo ">>> R2 upload FAILED — local snapshot still at $DEST" >&2
+        echo ">>> Uploading encrypted snapshot to $R2_REMOTE/"
+        if rclone copy --s3-no-head "$ENC" "$R2_REMOTE/"; then
+            echo ">>> R2 upload OK ($(basename "$ENC"))"
+        else
+            echo ">>> R2 upload FAILED — local snapshot still at $DEST" >&2
+        fi
     fi
 else
     echo
