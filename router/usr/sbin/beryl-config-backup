@@ -1,0 +1,310 @@
+#!/bin/sh
+# beryl-config-backup — self-snapshot beryl configs and push to Cloudflare R2.
+#
+# Designed for a travel router that's rarely at home and has tight overlay
+# space. Pattern: hash all source paths first; only when content has actually
+# changed, fetch rclone into /tmp (RAM) and upload. Most weeks the cron run
+# exits in milliseconds with no network activity at all.
+#
+# State persists in /etc/beryl-backup/ (overlay), 4-8 KB total.
+# On any rclone failure (no internet, R2 down) the previous hash is left in
+# place so the next run retries.
+#
+# Scope widened 2026-06-22 (after the MT6000 4.9.0 reflash incident) to cover
+# everything needed to restore beryl after a clean firmware flash: all of
+# /etc/config (network/wifi/wireguard_server/firewall/adguardhome/samba/...),
+# AdGuard config, /etc/xray, dropbear keys, passwd/shadow, crontab, rclone.conf.
+# Because that now includes secrets (WG private keys, ssh, shadow), the snapshot
+# is AES-256 ENCRYPTED before upload (fail-closed). Pass: /etc/beryl-backup.pass
+# (same value as flint2 /etc/system-backup.pass; dup in 1Password "system-backup pass").
+#
+# v3 2026-10-25 (pre-4.11.0 audit, lessons from the flint2 upgrades):
+#   * generated state lists in /etc/backup/ (installed packages, user-installed
+#     vs stock /rom, removed vs /rom, enabled services, services disabled vs
+#     /rom, sysupgrade keep-list). They are part of PATHS, so installing a
+#     package or enabling a service now triggers a fresh snapshot too.
+#   * VOLATILE_PATHS: captured in the tar but NOT hashed (client-name DB that
+#     changes with traffic, this log) — keeps the hash-skip meaningful.
+#   * extra paths: /etc/sysupgrade.conf, opkg custom feed + keys, admin-UI TLS
+#     certs/keys, nginx.conf, /etc/oui/oui.db.
+#   * richer manifest: glversion, timezone/ntp (uci export system), VPN counts,
+#     keep-list size, package/service deltas.
+#   * `--gen-state` only regenerates /etc/backup/* and exits (used by the
+#     Mac-side scripts/backup.sh so both pipelines ship identical lists).
+# Source of truth for this file: beryl-xray-web-console/router/usr/sbin/beryl-config-backup
+# Keep PATHS in sync with beryl-xray-web-console/scripts/backup.sh.
+
+set -eu
+
+BACKUP_DIR=/etc/beryl-backup
+STATE_FILE="$BACKUP_DIR/state.sha256"
+LOG_FILE="$BACKUP_DIR/beryl-backup.log"
+PASSFILE=/etc/beryl-backup.pass
+GEN_DIR=/etc/backup
+
+RCLONE=/tmp/rclone
+RCLONE_CONF=/etc/rclone/rclone.conf
+RCLONE_URL="https://downloads.rclone.org/rclone-current-linux-arm64.zip"
+R2_REMOTE="r2:sys-lab-home-backups/beryl-snapshots"
+R2_RETENTION_DAYS=180
+
+# Hashed + captured. No comments inside the list (it is word-split).
+PATHS="
+/etc/config
+/etc/AdGuardHome/config.yaml
+/etc/xray
+/etc/dropbear
+/etc/passwd
+/etc/shadow
+/etc/group
+/etc/crontabs
+/etc/rclone
+/etc/openvpn
+/etc/wireguard
+/root
+/usr/sbin/beryl-config-backup
+/usr/bin/sing-box
+/usr/bin/xray-panel-cli
+/etc/sing-box
+/etc/init.d/sing-box
+/etc/init.d/xray-panel-cli
+/etc/hotplug.d/button/50-sing-box-switch
+/etc/xray-panel-cli
+/etc/sysctl.d/99-disable-mptcp.conf
+/www/xray-panel-launcher.js
+/www/gl_home.html
+/www/gl_home.html.bak
+/etc/sysupgrade.conf
+/etc/opkg/customfeeds.conf
+/etc/opkg/keys
+/etc/oui/oui.db
+/etc/uhttpd.crt
+/etc/uhttpd.key
+/etc/nginx/nginx.conf
+/etc/nginx/nginx.cer
+/etc/nginx/nginx.key
+/etc/backup
+"
+
+# Captured but NOT hashed (they change on their own).
+VOLATILE_PATHS="
+/etc/oui-tertf/client.db
+/etc/beryl-backup/beryl-backup.log
+"
+
+mkdir -p "$BACKUP_DIR" "$GEN_DIR"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
+}
+
+# Replace $2 with $1 only when content differs (overlay is flash: avoid
+# rewriting identical files every run). Always removes the temp file.
+install_if_changed() {
+    if ! cmp -s "$1" "$2" 2>/dev/null; then
+        cp "$1" "$2"
+    fi
+    rm -f "$1"
+}
+
+# Regenerate the state lists in /etc/backup/. Pure local work, no network.
+gen_state() {
+    local t
+    t=$(mktemp /tmp/bb-gen.XXXXXX)
+
+    opkg list-installed 2>/dev/null | sort > "$t"
+    install_if_changed "$t" "$GEN_DIR/installed_packages.txt"
+
+    # Packages present now but absent from the stock image (/rom) = installed by us.
+    t=$(mktemp /tmp/bb-gen.XXXXXX)
+    awk 'NR==FNR { if ($1=="Package:") rom[$2]=1; next } $1=="Package:" && !($2 in rom) { print $2 }' \
+        /rom/usr/lib/opkg/status /usr/lib/opkg/status 2>/dev/null | sort > "$t"
+    install_if_changed "$t" "$GEN_DIR/packages-user-installed.txt"
+
+    # Stock packages we removed.
+    t=$(mktemp /tmp/bb-gen.XXXXXX)
+    awk 'NR==FNR { if ($1=="Package:") cur[$2]=1; next } $1=="Package:" && !($2 in cur) { print $2 }' \
+        /usr/lib/opkg/status /rom/usr/lib/opkg/status 2>/dev/null | sort > "$t"
+    install_if_changed "$t" "$GEN_DIR/packages-removed-vs-rom.txt"
+
+    # Enabled services (rc.d S-links) — sysupgrade does not keep /etc/rc.d.
+    t=$(mktemp /tmp/bb-gen.XXXXXX)
+    ls /etc/rc.d 2>/dev/null | grep '^S' | sort > "$t"
+    install_if_changed "$t" "$GEN_DIR/services-enabled.txt"
+
+    # Services enabled in the stock image but disabled by us (tor, samba4, ...).
+    t=$(mktemp /tmp/bb-gen.XXXXXX)
+    ls /rom/etc/rc.d 2>/dev/null | grep '^S' | sed 's/^S[0-9]*//' | sort > /tmp/bb-rc-rom
+    ls /etc/rc.d 2>/dev/null | grep '^S' | sed 's/^S[0-9]*//' | sort > /tmp/bb-rc-cur
+    awk 'NR==FNR { a[$0]=1; next } !($0 in a)' /tmp/bb-rc-cur /tmp/bb-rc-rom > "$t"
+    rm -f /tmp/bb-rc-rom /tmp/bb-rc-cur
+    install_if_changed "$t" "$GEN_DIR/services-disabled-vs-rom.txt"
+
+    # What a Keep-Settings sysupgrade would preserve right now.
+    t=$(mktemp /tmp/bb-gen.XXXXXX)
+    sysupgrade -l 2>/dev/null | sort > "$t"
+    install_if_changed "$t" "$GEN_DIR/sysupgrade-keep-list.txt"
+}
+
+gen_state
+
+if [ "${1:-}" = "--gen-state" ]; then
+    echo "state lists regenerated in $GEN_DIR:"
+    ls -la "$GEN_DIR"
+    exit 0
+fi
+
+# Content hash. Each existing source file is sha256'd, then the listing
+# itself is hashed. mtime changes don't perturb it; content does.
+# find -exec (not xargs) so filenames with quotes/spaces hash correctly.
+hash_current() {
+    for p in $PATHS; do
+        [ -e "$p" ] || continue
+        find "$p" -type f -exec sha256sum {} + 2>/dev/null
+    done | sort | sha256sum | awk '{print $1}'
+}
+
+CURRENT_HASH=$(hash_current)
+PREV_HASH=""
+[ -f "$STATE_FILE" ] && PREV_HASH=$(cat "$STATE_FILE")
+
+if [ "$CURRENT_HASH" = "$PREV_HASH" ] && [ "${1:-}" != "--force" ]; then
+    log "no changes (hash=$CURRENT_HASH)"
+    exit 0
+fi
+
+# Encryption key is mandatory now that the snapshot carries secrets — never
+# upload plaintext.
+if [ ! -f "$PASSFILE" ]; then
+    log "ABORT: $PASSFILE missing — refusing to back up secrets unencrypted"
+    exit 1
+fi
+
+TS=$(date -u +%Y%m%d-%H%M%SZ)
+MANIFEST=/tmp/beryl-backup-manifest.txt
+OUT_TAR="/tmp/beryl-self-${TS}.tar.gz"
+OUT_ENC="${OUT_TAR}.enc"
+TAR_INPUTS=$(mktemp /tmp/beryl-tar.XXXXXX)
+
+# From here on we may build temp files and download rclone. Always wipe
+# all of them on exit so /tmp tmpfs (RAM) doesn't accumulate ~72 MB
+# rclone binary (or plaintext secrets) across boots.
+trap 'rm -f "$RCLONE" "$OUT_TAR" "$OUT_ENC" "$MANIFEST" "$TAR_INPUTS" 2>/dev/null' EXIT
+
+# Acquire rclone — ephemeral copy in /tmp, deleted by trap above.
+if [ ! -x "$RCLONE" ]; then
+    log "fetching rclone to $RCLONE"
+    cd /tmp
+    if ! wget -q -O rclone.zip "$RCLONE_URL"; then
+        log "rclone download failed (no internet?)"
+        exit 1
+    fi
+    if ! unzip -q -o rclone.zip; then
+        log "unzip failed"
+        rm -f rclone.zip
+        exit 1
+    fi
+    mv rclone-*-linux-arm64/rclone "$RCLONE"
+    chmod 755 "$RCLONE"
+    rm -rf rclone.zip rclone-*-linux-arm64/
+fi
+
+if [ ! -f "$RCLONE_CONF" ]; then
+    log "rclone config missing at $RCLONE_CONF"
+    exit 1
+fi
+
+# Manifest with router state at backup time.
+{
+    echo "=== beryl-self-backup manifest ==="
+    echo
+    echo "backup_utc: $TS"
+    echo "host: $(cat /proc/sys/kernel/hostname 2>/dev/null || echo unknown)"
+    echo "uptime: $(uptime 2>/dev/null)"
+    echo "glversion: $(cat /etc/glversion 2>/dev/null) ($(cat /etc/version.type 2>/dev/null) $(cat /etc/version.date 2>/dev/null))"
+    echo "openwrt: $(sed -n 's/.*DESCRIPTION=//p' /etc/openwrt_release 2>/dev/null | tr -d '\"')"
+    echo "kernel: $(uname -srm)"
+    echo "board: $(cat /tmp/sysinfo/board_name 2>/dev/null) / $(cat /tmp/sysinfo/model 2>/dev/null)"
+    echo "overlay: $(df -h /overlay 2>/dev/null | awk 'NR==2{print $3" used / "$2", "$5}')"
+    echo "sing-box: $(/usr/bin/sing-box version 2>/dev/null | head -1)"
+    echo "xray-panel-cli: $(/usr/bin/xray-panel-cli --version 2>/dev/null | head -1 || echo '?')"
+    echo "localtime: $(readlink /tmp/localtime 2>/dev/null) ; date: $(date)"
+    echo
+    echo "--- uci export system (timezone / ntp) ---"
+    uci export system 2>/dev/null || true
+    echo
+    echo "--- uci glconfig.general ---"
+    uci show glconfig.general 2>/dev/null || true
+    echo
+    echo "--- uci sing-box ---"
+    uci show sing-box 2>/dev/null || true
+    echo
+    echo "--- VPN inventory (counts only) ---"
+    echo "wireguard client profiles: $(uci show wireguard 2>/dev/null | grep -c '=peers' || true)"
+    echo "wireguard_server peers:    $(uci show wireguard_server 2>/dev/null | grep -c '=peers' || true)"
+    echo "ovpn client profiles:      $(uci show ovpnclient 2>/dev/null | grep -c '=client' || true)"
+    echo "xray-panel-cli profiles:   $(grep -c '"name"' /etc/xray-panel-cli/profiles.json 2>/dev/null || true)"
+    echo "xray-panel-cli scans:      $(ls /etc/xray-panel-cli/scans 2>/dev/null | wc -l)"
+    echo
+    echo "--- packages installed by us (vs /rom) ---"
+    cat "$GEN_DIR/packages-user-installed.txt" 2>/dev/null
+    echo
+    echo "--- stock packages removed ---"
+    cat "$GEN_DIR/packages-removed-vs-rom.txt" 2>/dev/null
+    echo
+    echo "--- services disabled vs /rom ---"
+    cat "$GEN_DIR/services-disabled-vs-rom.txt" 2>/dev/null
+    echo
+    echo "--- services enabled (rc.d) ---"
+    tr '\n' ' ' < "$GEN_DIR/services-enabled.txt" 2>/dev/null; echo
+    echo
+    echo "--- /etc/sysupgrade.conf ---"
+    cat /etc/sysupgrade.conf 2>/dev/null
+    echo
+    echo "--- sysupgrade keep-list: $(wc -l < "$GEN_DIR/sysupgrade-keep-list.txt" 2>/dev/null) entries ---"
+    echo
+    echo "--- captured paths ---"
+    for p in $PATHS; do echo "  $p"; done
+    echo "--- captured (volatile, not hashed) ---"
+    for p in $VOLATILE_PATHS; do echo "  $p"; done
+} > "$MANIFEST"
+
+# Build tar input list (manifest + only existing source paths).
+{
+    echo "$MANIFEST"
+    for p in $PATHS $VOLATILE_PATHS; do
+        [ -e "$p" ] && echo "$p"
+    done
+} > "$TAR_INPUTS"
+
+if ! tar -czf "$OUT_TAR" -T "$TAR_INPUTS" 2>>"$LOG_FILE"; then
+    log "tar failed"
+    exit 1
+fi
+
+# Encrypt before upload — fail-closed: if this fails we abort rather than
+# push the plaintext (it contains WG/ssh/shadow secrets).
+if ! openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:$PASSFILE" -in "$OUT_TAR" -out "$OUT_ENC" 2>>"$LOG_FILE"; then
+    log "encryption FAILED — aborting (won't upload plaintext secrets)"
+    exit 1
+fi
+rm -f "$OUT_TAR"
+OUT="$OUT_ENC"
+
+SIZE=$(wc -c < "$OUT")
+log "snapshot (encrypted): $OUT ($SIZE bytes)"
+
+# Upload. On failure leave state file untouched so the next run retries.
+if "$RCLONE" --config "$RCLONE_CONF" copy --s3-no-head "$OUT" "$R2_REMOTE/" >> "$LOG_FILE" 2>&1; then
+    log "uploaded to R2: $R2_REMOTE/$(basename "$OUT")"
+    echo "$CURRENT_HASH" > "$STATE_FILE"
+
+    # Rotation. Failures here are non-fatal — we just don't prune this run.
+    "$RCLONE" --config "$RCLONE_CONF" delete --min-age "${R2_RETENTION_DAYS}d" "$R2_REMOTE/" >> "$LOG_FILE" 2>&1 || true
+else
+    log "R2 upload FAILED — keeping prev hash so next run retries"
+    exit 1
+fi
+
+log "done"
+exit 0

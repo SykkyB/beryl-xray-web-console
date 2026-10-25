@@ -36,6 +36,7 @@ DEST="$DEST_DIR/beryl-$TS.tar.gz"
 # Paths to capture. Trailing slash on directories means "include all
 # contents". Ordered roughly: binaries, sing-box runtime, init/hotplug,
 # panel runtime, sysctl.
+# KEEP IN SYNC with router/usr/sbin/beryl-config-backup (PATHS / VOLATILE_PATHS).
 PATHS=(
     # --- full router config (added 2026-06-22 after the MT6000 4.9.0 reflash
     # incident: a clean firmware flash wipes everything not explicitly kept,
@@ -71,6 +72,24 @@ PATHS=(
     /www/xray-panel-launcher.js
     /www/gl_home.html
     /www/gl_home.html.bak
+    # --- added 2026-10-25 (pre-4.11.0 audit, lessons from the flint2 upgrades) ---
+    /etc/sysupgrade.conf           # keep-list incl. our custom block
+    /etc/opkg/customfeeds.conf     # v2raya feed
+    /etc/opkg/keys                 # incl. the v2raya feed key
+    /etc/oui/oui.db                # GL UI db (static)
+    /etc/uhttpd.crt                # admin-UI TLS cert/key (browser trust)
+    /etc/uhttpd.key
+    /etc/nginx/nginx.conf
+    /etc/nginx/nginx.cer
+    /etc/nginx/nginx.key
+    /etc/backup                    # generated state lists (packages, services,
+                                   # keep-list) — written by beryl-config-backup --gen-state
+)
+
+# Captured but not part of the router-side change hash (they change on their own).
+VOLATILE_PATHS=(
+    /etc/oui-tertf/client.db       # GL client names / traffic db
+    /etc/beryl-backup/beryl-backup.log
 )
 
 GIT_REV="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -86,7 +105,21 @@ collect() {
     ssh "$TARGET" "$1" 2>/dev/null || echo "?"
 }
 
+# Refresh the generated state lists in /etc/backup/ first (installed packages,
+# user-installed vs /rom, services enabled/disabled vs /rom, sysupgrade keep-list)
+# so this snapshot carries the same lists as the router-side pipeline.
+if ! ssh "$TARGET" '/usr/sbin/beryl-config-backup --gen-state' >/dev/null 2>&1; then
+    echo ">>> warning: 'beryl-config-backup --gen-state' failed on $TARGET (old router script?)" >&2
+fi
+
 R_HOST="$(collect 'cat /proc/sys/kernel/hostname')"
+R_GLVERSION="$(collect 'cat /etc/glversion')"
+R_TZ="$(collect 'uci export system')"
+R_PKGS_USER="$(collect 'cat /etc/backup/packages-user-installed.txt')"
+R_PKGS_REMOVED="$(collect 'cat /etc/backup/packages-removed-vs-rom.txt')"
+R_SVC_DISABLED="$(collect 'cat /etc/backup/services-disabled-vs-rom.txt')"
+R_KEEP="$(collect 'cat /etc/sysupgrade.conf')"
+R_KEEP_COUNT="$(collect 'sysupgrade -l | wc -l')"
 R_UPTIME="$(collect 'uptime')"
 R_OPENWRT="$(collect 'sed -n s/.*DESCRIPTION=//p /etc/openwrt_release | tr -d \\\"')"
 R_SINGBOX="$(collect '/usr/bin/sing-box version 2>/dev/null | head -1')"
@@ -107,9 +140,25 @@ git_dirty_files: $GIT_DIRTY
 
 --- router ---
 host: $R_HOST
+glversion: $R_GLVERSION
 uptime: $R_UPTIME
 openwrt: $R_OPENWRT
 kernel: $R_KERNEL
+
+--- uci export system (timezone / ntp) ---
+$R_TZ
+
+--- packages installed by us (vs /rom) ---
+$R_PKGS_USER
+
+--- stock packages removed ---
+$R_PKGS_REMOVED
+
+--- services disabled vs /rom ---
+$R_SVC_DISABLED
+
+--- /etc/sysupgrade.conf ($R_KEEP_COUNT entries in sysupgrade -l) ---
+$R_KEEP
 
 --- sing-box ---
 $R_SINGBOX
@@ -119,6 +168,8 @@ $R_UCI_SINGBOX
 
 --- captured paths ---
 $(printf '  %s\n' "${PATHS[@]}")
+--- captured (volatile) ---
+$(printf '  %s\n' "${VOLATILE_PATHS[@]}")
 EOF
 
 # Push manifest to router so it ends up inside the tarball at a
@@ -129,7 +180,7 @@ scp -O -q "$LOCAL_MANIFEST" "$TARGET:/tmp/backup-manifest.txt"
 # the path list on the router and feed only the existing entries via
 # stdin (-T -). The manifest is already on the router from the scp
 # above; prepend it.
-PATHS_STR="${PATHS[*]}"
+PATHS_STR="${PATHS[*]} ${VOLATILE_PATHS[*]}"
 ssh "$TARGET" "
     {
         echo /tmp/backup-manifest.txt
@@ -141,6 +192,7 @@ ssh "$TARGET" "
 
 ssh "$TARGET" 'rm -f /tmp/backup-manifest.txt' || true
 
+(cd "$DEST_DIR" && shasum -a 256 "$(basename "$DEST")" > "$(basename "$DEST").sha256")
 SIZE="$(ls -lh "$DEST" | awk '{print $5}')"
 COUNT="$(tar tzf "$DEST" | wc -l | tr -d ' ')"
 
