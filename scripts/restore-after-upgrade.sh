@@ -58,6 +58,7 @@ etc/xray/config.json
 etc/xray-panel-cli/panel.yaml
 etc/xray-panel-cli/profiles.json
 etc/xray-panel-cli/sources.json
+etc/xray-panel-cli/scans
 etc/rclone/rclone.conf
 etc/beryl-backup.pass
 usr/sbin/beryl-config-backup

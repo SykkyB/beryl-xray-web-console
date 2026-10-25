@@ -2,7 +2,7 @@
 
 Подготовлено: 2026-10-25. Текущая прошивка: **4.8.1 release8** (2025-08-19). Цель: **4.11.0 release3** (собрана 2026-09-24, выложена 2026-09-28).
 Сделано по образцу `flint2-backups/UPGRADE-PLAN-4.11.0.md` и `restore-after-upgrade.sh`, чтобы уроки апгрейдов flint2 (2026-06-21 U-Boot recovery + 4 часа руками; 2026-09-28 keep-list + скрипт = 4 минуты) не повторять заново.
-**Апгрейд ещё не выполнялся.** Этот файл — подготовка.
+**Апгрейд выполнен 2026-10-25, итог в §9.**
 
 ---
 
@@ -197,6 +197,14 @@ ssh beryl "cat /etc/glversion; /etc/init.d/sing-box status; pgrep -f xray-panel-
 
 ---
 
-## 9. Результат
+## 9. Результат (2026-10-25, 22:56–23:01 UTC+4)
 
-(заполнить после апгрейда: дата, способ, время восстановления, что потерялось, отклонения от плана)
+- **Способ А через RPC** (`upgrade.upgrade_online {"keep_config":true,"keep_package":true}` — то же, что кнопка в панели; поллинг `get_online_upgrade_status`): скачивание 80 МБ за 10 с, статусы 1 (downloading) → 4 (hash verify ok) → 6, в 22:56:39 роутер сбросил сессии и ушёл в прошивку. Ping пропал через 36 с, вернулся через 61 с, ssh сразу (host-ключи dropbear сохранились). **4.11.0 release3, OpenWrt 21.02-SNAPSHOT r15812+926**, как и ожидалось.
+- **Keep-list сработал полностью:** 24 из 25 проверенных путей на месте (бинари, init, hotplug, конфиги sing-box/xray/панели, rclone.conf, pass, state бэкапа, `/etc/backup/`, launcher, фид+ключ v2raya, zoneinfo Tbilisi, sysupgrade.conf, AdGuard, authorized_keys, cron). Единственный потерянный — `/etc/xray-panel-cli/scans/` (сознательно не в keep-list), вернул из Mac-tarball (`tar … --include='etc/xray-panel-cli/scans/*' | ssh beryl`), overlay после этого 43 %.
+- **Потерялось ровно предсказанное:** rc.d-симлинки sing-box/xray-panel-cli, `htop`, патч `gl_home.html`; прошивка заново включила `tor`. **LuCI (22 пакета) пережил апгрейд** благодаря `keep_package=true` (GL «keep packages», панель передаёт его вместе с Keep Settings) — реинсталл не понадобился; 4.11 сам поставил `netify*` (DPI).
+- **`scripts/restore-after-upgrade.sh`** (dry-run, затем боевой): chmod, `opkg update` + htop, sysctl, enable+restart sing-box/xray-panel-cli, disable+stop tor, smoke зелёный. **`deploy/install.sh beryl`**: пересобрал и залил панель, пере-патчил `gl_home.html`, панель перезапущена. Восстановление ≈ 2 минуты, ручных действий ноль (кроме сканов).
+- **Проверки:** с Mac `http://192.168.200.1/` → 200, панель `:9092` → 401, DNS через Beryl резолвит; wwan-репитер к flint2 (`XXX.v52`) up, интернет есть; sing-box `active with no instances` (кнопка в положении «выкл», как до апгрейда), `enabled=1`, `bind_switch=1`; WG: 3 клиентских профиля, 1 пир сервера; cron 2 строки; `/tmp/localtime` → Asia/Tbilisi; `rc_upgrade=0`.
+- **Новое в 4.11 по факту:** `upnpd` выкл; `prplmesh` agent enable=1 passive, `gl-mesh` base.enabled=0 mode=controller; новые wireless-секции `iot2g/iot5g` (GL-MT3000-ad7-IoT), `bbss5g` (gl-mesh-bh-), guest — все `disabled=1`; `network.iot` 192.168.10.1 disabled; правило `Block-LAN-mgmt-iot` (src=lan, dest 192.168.10.1) есть, но целит не в нашу LAN — безвредно; `gl-dns-v2` появился, AdGuard как был выключен; `amneziawg-tools` + `kmod-amneziawg` стоят. Прямой `/cgi-bin/luci` с localhost → 403 (гейт nginx GL; LuCI открывать через System → Advanced Settings).
+- **Снапшот нового состояния:** R2 `beryl-self-20261025-190103Z.tar.gz.enc` (19 561 328 байт; в списках теперь netify* и htop).
+- **Отклонения от плана:** нет. Улучшение после: `etc/xray-panel-cli/scans` добавлен в `RESTORE_IF_MISSING` restore-скрипта, чтобы в следующий раз сканы вернулись автоматически.
+- **Осталось руками в UI:** переключить боковую кнопку туда-обратно (sing-box должен подняться/опуститься, `logread | grep sing-box`), открыть VPN Dashboard и WireGuard Client (3 профиля), заглянуть в System → Upgrade (4.11.0 текущая, RC выкл). Mesh и AmneziaWG — по отдельному решению.
