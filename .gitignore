@@ -35,3 +35,6 @@ deploy/panel.local.yaml
 # RECON.md is OUR analysis notes and stays tracked.
 router/recon/spa/
 router/recon/dom/
+
+# Claude Code local permissions (per-machine, never commit)
+.claude/settings.local.json
