@@ -161,8 +161,11 @@ else
         tar -xzf "$TARBALL" -C "$TMP/stage" $TAKE
         say "будет залито на роутер:"; (cd "$TMP/stage" && find . -type f | sed 's|^\./|  /|')
         if [ "$DRY" = 0 ]; then
-            tar -czf - -C "$TMP/stage" . | ssh "$HOST" 'cat > /tmp/beryl-restore.tar.gz'
-            ssh "$HOST" 'cd / && tar -xzpf /tmp/beryl-restore.tar.gz && rm -f /tmp/beryl-restore.tar.gz && echo "залито"'
+            # --uid/--gid 0: bsdtar on the Mac would otherwise record the local user (501)
+            # and busybox tar on the router restores that owner — dropbear then refuses
+            # authorized_keys, and configs end up owned by a non-existent uid (lesson 2026-10-26).
+            tar -czf - --uid 0 --gid 0 --uname root --gname root -C "$TMP/stage" . | ssh "$HOST" 'cat > /tmp/beryl-restore.tar.gz'
+            ssh "$HOST" 'cd / && tar -xzpf /tmp/beryl-restore.tar.gz && rm -f /tmp/beryl-restore.tar.gz && chown -R root:root /etc/dropbear /etc/config 2>/dev/null; echo "залито"'
         fi
     fi
 fi
