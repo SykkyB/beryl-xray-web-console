@@ -9,7 +9,7 @@
 | Железо | MT7987A (Filogic 850), 4× Cortex-A53 2.0 ГГц, 512 МБ RAM, 512 МБ NAND, 2× 2.5G (eth0 WAN, eth1 LAN), USB 3.0, боковой переключатель gpio-465 |
 | Прошивка | была 4.8.7 release2 (2026-04-15) → **4.9.0 release1** (2026-07-07). База OpenWrt 21.02 MTK SDK, kernel 5.4.281, `aarch64_cortex-a53` — наши arm64-бинари идут без пересборки |
 | Чего нет | 4.11 для MT3600BE ещё нет → **mesh не поддерживается** (Beryl 7 в списке unsupported в доках GL); новый DNS-дашборд 4.11 тоже отсутствует. AmneziaWG 2.0 есть (4.9.0) |
-| Регион | **CN-юнит**: `/proc/gl-hw-info/country_code = CN` (заводские данные, не прошивка). Образы прошивки на `fw.gl-inet.cn` и `fw.gl-inet.com` совпадают по sha256 |
+| Регион | **CN-юнит**, VPN-меню возвращены скриптом (см. ниже): `/proc/gl-hw-info/country_code = CN` (заводские данные, не прошивка). Образы прошивки на `fw.gl-inet.cn` и `fw.gl-inet.com` совпадают по sha256 |
 
 ### Как CN-регион реально ограничивает
 - Бэкенд **ничего не блокирует**: `system.get_info` → `hidden_features: []`, `software_feature.vpn/adguard/obfuscation = true`; RPC `vpn-client`, `wg-client`, `wg-server` отвечают; пакеты wireguard/amneziawg/openvpn/adguardhome стоят и обновляются.
@@ -17,7 +17,7 @@
 - Служба `/etc/init.d/vpn-client` на юните выключена (S95vpn-client есть в /rom, в rc.d нет); в init-скрипте проверки страны нет.
 - Облако: `cloud.gl-inet.cn`, сервер обновлений `fw.gl-inet.cn`. Фиды opkg — международные `fw.gl-inet.com/releases/v21.02-SNAPSHOT/mt7987a/…`.
 - Официальная позиция GL: конвертация CN→Global не поддерживается, метод смены региона в загрузчике на форуме удалён по просьбе GL — не делаем.
-- **Вариант «показать VPN-меню» (не применён, ждёт решения):** убрать `lang_hide` из семи JSON в `/usr/share/oui/menu.d/` (файлы в оверлее, прошивка перезапишет при апгрейде → шаг надо сделать идемпотентным в `deploy/install.sh`), затем `/etc/init.d/nginx reload` и Cmd+Shift+R; при необходимости `/etc/init.d/vpn-client enable`. Бэкенд уже готов. GL это не поддерживает.
+- **VPN-меню возвращены (применено 2026-10-26 20:20):** `/usr/sbin/gl-unhide-cn-menus` (в git: `router/usr/sbin/`) убирает `lang_hide` из семи JSON в `/usr/share/oui/menu.d/` (оригиналы рядом как `.orig`), перезапускает nginx и включает службу `vpn-client`. Идемпотентен, проверяет, что результат валидный JSON. Прошивка при апгрейде привозит новые JSON → скрипт вызывают `deploy/install.sh` и `restore-after-upgrade.sh`; сам скрипт в keep-list. Бейдж CN в шапке остаётся. GL это не поддерживает.
 
 ## 2. Что сделано (по порядку)
 1. ssh-ключ `~/.ssh/beryl` → `/etc/dropbear/authorized_keys` (вручную с паролем), алиас `beryl7`.

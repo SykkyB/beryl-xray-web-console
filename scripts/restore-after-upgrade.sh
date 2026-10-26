@@ -69,6 +69,7 @@ etc/opkg/keys/94cc2a834fb0aa03
 etc/AdGuardHome/config.yaml
 etc/dropbear/authorized_keys
 etc/crontabs/root
+usr/sbin/gl-unhide-cn-menus
 etc/backup/packages-user-installed.txt
 etc/backup/services-disabled-vs-rom.txt
 "
@@ -91,6 +92,7 @@ KEEP_PATHS="
 /etc/beryl-backup/
 /etc/backup/
 /usr/sbin/beryl-config-backup
+/usr/sbin/gl-unhide-cn-menus
 /etc/sysctl.d/99-disable-mptcp.conf
 /etc/opkg/keys/
 /root/
@@ -184,7 +186,7 @@ run() { echo "+ $*"; [ "$DRY" = 1 ] || eval "$*"; }
 ex() { [ -e "$1" ]; }
 
 echo "--- права"
-for f in /usr/bin/sing-box /usr/bin/xray-panel-cli /etc/init.d/sing-box /etc/init.d/xray-panel-cli /etc/hotplug.d/button/50-sing-box-switch /usr/sbin/beryl-config-backup; do ex "$f" && run chmod 755 "$f"; done
+for f in /usr/bin/sing-box /usr/bin/xray-panel-cli /etc/init.d/sing-box /etc/init.d/xray-panel-cli /etc/hotplug.d/button/50-sing-box-switch /usr/sbin/beryl-config-backup /usr/sbin/gl-unhide-cn-menus; do ex "$f" && run chmod 755 "$f"; done
 for f in /etc/xray-panel-cli/panel.yaml /etc/xray-panel-cli/profiles.json /etc/xray-panel-cli/sources.json /etc/beryl-backup.pass /etc/rclone/rclone.conf; do ex "$f" && run chmod 600 "$f"; done
 
 echo "--- /etc/sysupgrade.conf (keep-list)"
@@ -204,6 +206,9 @@ if [ "$OPKG" = 1 ]; then
         echo "все пакеты уже стоят"
     fi
 fi
+
+echo "--- CN-юнит: вернуть VPN/AdGuard в меню GL (идемпотентно, прошивка привозит новые JSON)"
+ex /usr/sbin/gl-unhide-cn-menus && run /usr/sbin/gl-unhide-cn-menus
 
 echo "--- localtime для Go-бинарей (sing-box, xray-panel-cli)"
 if [ "$(readlink /tmp/localtime 2>/dev/null)" != "/usr/share/zoneinfo/Asia/Tbilisi" ]; then

@@ -1,0 +1,56 @@
+#!/bin/sh
+# gl-unhide-cn-menus — show the VPN / AdGuard Home / DDNS / Tor entries in the
+# GL.iNet admin panel on a CN-region unit (/proc/gl-hw-info/country_code = CN).
+#
+# Mechanism (verified on GL-MT3600BE 4.9.0, 2026-10-26): the menu definitions in
+# /usr/share/oui/menu.d/*.json carry  "lang_hide": ["zh-cn"]  and the panel's
+# app.js hides such entries when the COUNTRY code contains "cn" (not when the UI
+# language is Chinese). The backend RPCs (vpn-client, wg-client, wg-server,
+# adguardhome) are not restricted at all. Removing the key makes the entries
+# visible and routable again. Originals are kept as <file>.orig.
+#
+# Idempotent. Re-run after every firmware upgrade (the firmware ships fresh JSON):
+# deploy/install.sh and scripts/restore-after-upgrade.sh call it automatically.
+# Not supported by GL.iNet. Does not touch the bootloader or the region code.
+set -eu
+
+DIR=/usr/share/oui/menu.d
+CC=$(cat /proc/gl-hw-info/country_code 2>/dev/null || echo "")
+case "$(echo "$CC" | tr 'A-Z' 'a-z')" in
+    *cn*) ;;
+    *) echo "country_code='$CC' — not a CN unit, nothing to do"; exit 0 ;;
+esac
+
+changed=0
+for f in "$DIR"/*.json; do
+    grep -q '"lang_hide"' "$f" || continue
+    grep -q 'zh-cn' "$f" || continue
+    [ -f "$f.orig" ] || cp "$f" "$f.orig"
+    MENU_FILE="$f" lua -e '
+        local path = os.getenv("MENU_FILE")
+        local fh = assert(io.open(path, "r")); local s = fh:read("*a"); fh:close()
+        -- drop the key with its array value and an optional trailing comma …
+        local out, n = s:gsub("\"lang_hide\"%s*:%s*%b[]%s*,?", "")
+        -- … and a comma that is now dangling before a closing brace
+        out = out:gsub(",(%s*})", "%1")
+        local ok, err = pcall(function() return require("cjson").decode(out) end)
+        if not ok then io.stderr:write(path .. ": result is not valid JSON, left untouched: " .. tostring(err) .. "\n"); os.exit(2) end
+        fh = assert(io.open(path, "w")); fh:write(out); fh:close()
+        print(path .. ": removed " .. n .. " lang_hide")
+    ' && changed=$((changed + 1))
+done
+
+if [ "$changed" -gt 0 ]; then
+    /etc/init.d/nginx restart >/dev/null 2>&1 || true
+    echo "patched $changed file(s); nginx restarted — reload the panel (Cmd+Shift+R)"
+else
+    echo "nothing to patch (already applied)"
+fi
+
+# GL's VPN client manager — enabled on the international units, was disabled here.
+if [ -x /etc/init.d/vpn-client ] && ! /etc/init.d/vpn-client enabled 2>/dev/null; then
+    /etc/init.d/vpn-client enable
+    /etc/init.d/vpn-client start >/dev/null 2>&1 || true
+    echo "vpn-client service enabled"
+fi
+exit 0

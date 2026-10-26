@@ -44,6 +44,7 @@ scp $SSH_OPTS $SCP_OPTS \
 	"$REPO_ROOT/router/etc/init.d/sing-box" \
 	"$REPO_ROOT/router/etc/hotplug.d/button/50-sing-box-switch" \
 	"$REPO_ROOT/router/www/xray-panel-launcher.js" \
+	"$REPO_ROOT/router/usr/sbin/gl-unhide-cn-menus" \
 	"$TARGET:/tmp/"
 
 echo ">>> installing on $TARGET"
@@ -84,6 +85,14 @@ chmod 0755                        /etc/hotplug.d/button/50-sing-box-switch
 # re-running this installer puts it back.
 cp /tmp/xray-panel-launcher.js    /www/xray-panel-launcher.js
 chmod 0644                        /www/xray-panel-launcher.js
+
+# CN-region units (country_code=CN) hide the VPN/AdGuard/DDNS/Tor menus in the
+# panel purely in the frontend; this script removes the lang_hide flags from
+# /usr/share/oui/menu.d/*.json (idempotent, no-op on international units).
+# Firmware upgrades ship fresh JSON, so it must run on every install. See MIGRATION-BERYL7.md.
+cp /tmp/gl-unhide-cn-menus           /usr/sbin/gl-unhide-cn-menus
+chmod 0755                           /usr/sbin/gl-unhide-cn-menus
+/usr/sbin/gl-unhide-cn-menus || echo "==> gl-unhide-cn-menus failed (non-fatal)"
 if [ -f /www/gl_home.html ]; then
 	[ -f /www/gl_home.html.bak ] || cp /www/gl_home.html /www/gl_home.html.bak
 	# Cache-bust the script tag with a content-derived query-string so
