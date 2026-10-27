@@ -31,7 +31,11 @@ DEST_DIR="$ROOT/backups"
 mkdir -p "$DEST_DIR"
 
 TS="$(date -u +%Y%m%d-%H%M%SZ)"
-DEST="$DEST_DIR/beryl-$TS.tar.gz"
+# Model in the file name (mt3000 / mt3600be): two Beryls, one backups/ dir and one
+# R2 prefix; restore-after-upgrade.sh picks snapshots by the target model.
+R_MODEL="$(ssh "$TARGET" 'cat /proc/gl-hw-info/model' 2>/dev/null | tr -cd 'a-z0-9')"
+[ -n "$R_MODEL" ] || R_MODEL=unknown
+DEST="$DEST_DIR/beryl-$R_MODEL-$TS.tar.gz"
 
 # Paths to capture. Trailing slash on directories means "include all
 # contents". Ordered roughly: binaries, sing-box runtime, init/hotplug,
@@ -140,6 +144,7 @@ git_dirty_files: $GIT_DIRTY
 
 --- router ---
 host: $R_HOST
+model: $R_MODEL
 glversion: $R_GLVERSION
 uptime: $R_UPTIME
 openwrt: $R_OPENWRT

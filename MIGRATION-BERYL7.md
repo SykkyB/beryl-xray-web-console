@@ -44,5 +44,8 @@
 `ssh beryl`: glversion 4.9.0; sing-box `active with no instances` (кнопка в «выкл»), `enabled=1`, `bind_switch=1`, `switch-button.func=xray`; панель `:9092` → 401; патч gl_home present; hotplug ok; WG 3 профиля + 1 пир сервера; localtime Asia/Tbilisi; cron 1 строка; keep-list ≥ 8 наших путей; SSID XXXX.24 / XXX.52; wwan up; с Mac админка 200 и панель 401.
 Руками: боковая кнопка туда-обратно (sing-box должен подняться по активному профилю), панель в сайдбаре GL, System → Toggle Button Settings (функция `xray` наша, GL может показать её как неизвестную — норма).
 
+## 4b. Два роутера в одном бэкапе (2026-10-27)
+Оба пишут в `backups/` и R2 `beryl-snapshots/`. С 2026-10-27 имя несёт модель (`beryl-self-mt3600be-…`, `beryl-mt3000-…`), манифест — `host:`/`model:`. `restore-after-upgrade.sh` читает модель целевого роутера и берёт снапшот только своей модели; чужой снапшот останавливает скрипт (`--force-model` — осознанно). Файлы без модели в имени = Beryl AX (последние 26.10 07:37Z). Алиасы: `beryl`/`beryl7` → Beryl 7, `beryl-ax` → AX в режиме роутера (тот же 192.168.200.1 — не включать оба вместе). Для AX на самом роутере стоит ещё v3-скрипт без модели в имени — обновить при следующем включении (`cat router/usr/sbin/beryl-config-backup | ssh beryl-ax 'cat > /tmp/b && mv /tmp/b /usr/sbin/beryl-config-backup && chmod 755 /usr/sbin/beryl-config-backup'`).
+
 ## 5. Откат
 Старый Beryl AX полностью рабочий (4.11.0, всё на месте, последний снапшот 26.10 07:37Z). Включить, воткнуть кабель, `ssh beryl` (host-ключ AX: `ssh-keygen -R 192.168.200.1` перед первым заходом).

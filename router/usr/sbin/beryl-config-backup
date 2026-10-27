@@ -31,6 +31,8 @@
 #     keep-list size, package/service deltas.
 #   * `--gen-state` only regenerates /etc/backup/* and exits (used by the
 #     Mac-side scripts/backup.sh so both pipelines ship identical lists).
+#   * 2026-10-27: snapshot name carries the model (beryl-self-<model>-<ts>) — two
+#     Beryls (mt3000, mt3600be) share the R2 prefix.
 # Source of truth for this file: beryl-xray-web-console/router/usr/sbin/beryl-config-backup
 # Keep PATHS in sync with beryl-xray-web-console/scripts/backup.sh.
 
@@ -181,8 +183,12 @@ if [ ! -f "$PASSFILE" ]; then
 fi
 
 TS=$(date -u +%Y%m%d-%H%M%SZ)
+# Model in the file name (mt3000 / mt3600be): two Beryls share this R2 prefix,
+# and restore-after-upgrade.sh refuses a snapshot from the other model.
+MODEL=$(cat /proc/gl-hw-info/model 2>/dev/null | tr -cd "a-z0-9")
+[ -n "$MODEL" ] || MODEL=unknown
 MANIFEST=/tmp/beryl-backup-manifest.txt
-OUT_TAR="/tmp/beryl-self-${TS}.tar.gz"
+OUT_TAR="/tmp/beryl-self-${MODEL}-${TS}.tar.gz"
 OUT_ENC="${OUT_TAR}.enc"
 TAR_INPUTS=$(mktemp /tmp/beryl-tar.XXXXXX)
 
@@ -220,6 +226,7 @@ fi
     echo
     echo "backup_utc: $TS"
     echo "host: $(cat /proc/sys/kernel/hostname 2>/dev/null || echo unknown)"
+    echo "model: $MODEL"
     echo "uptime: $(uptime 2>/dev/null)"
     echo "glversion: $(cat /etc/glversion 2>/dev/null) ($(cat /etc/version.type 2>/dev/null) $(cat /etc/version.date 2>/dev/null))"
     echo "openwrt: $(sed -n 's/.*DESCRIPTION=//p' /etc/openwrt_release 2>/dev/null | tr -d '\"')"

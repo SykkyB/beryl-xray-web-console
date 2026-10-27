@@ -16,6 +16,11 @@
 #   scripts/restore-after-upgrade.sh --tarball FILE       # явный tarball (backups/beryl-*.tar.gz
 #                                                         #   или *.tar.gz.enc из R2 + --pass FILE)
 #   scripts/restore-after-upgrade.sh --host root@192.168.8.1   # после чистой прошивки
+#   scripts/restore-after-upgrade.sh --force-model            # снапшот от другой модели (mt3000 ↔ mt3600be), осознанно
+#
+# Два Beryl (mt3000 = AX, mt3600be = Beryl 7) пишут снапшоты в одну папку/префикс:
+# скрипт берёт свежий backups/beryl-<модель>-*.tar.gz по модели целевого роутера
+# (/proc/gl-hw-info/model) и сверяет host:/model: в манифесте любого tarball.
 #
 # После него: deploy/install.sh <host>  (пере-патч gl_home.html кнопкой панели).
 set -euo pipefail
@@ -27,6 +32,7 @@ OPKG=1
 LUCI=1
 TARBALL=""
 PASSFILE=""
+FORCE_MODEL=0
 # Пакеты поверх стока (из /etc/backup/packages-user-installed.txt на 2026-10-25).
 # zoneinfo-asia ставится отдельно, если его нет (Go-бинари читают /tmp/localtime).
 PKGS="htop"
@@ -40,6 +46,7 @@ while [ $# -gt 0 ]; do
         --tarball) TARBALL="$2"; shift ;;
         --pass) PASSFILE="$2"; shift ;;
         --host) HOST="$2"; shift ;;
+        --force-model) FORCE_MODEL=1 ;;
         -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
         *) echo "unknown arg: $1"; exit 2 ;;
     esac
@@ -110,11 +117,27 @@ say() { printf '\n=== %s\n' "$*"; }
 TMP=$(mktemp -d)
 trap 'rm -rf "${TMP:?}"' EXIT
 
-# ---------- 0. tarball ----------
-if [ -z "$TARBALL" ]; then
-    TARBALL="$(ls -t "$ROOT"/backups/beryl-*.tar.gz 2>/dev/null | head -1 || true)"
+# ---------- 0. ssh + модель целевого роутера ----------
+say "ssh $HOST"
+if ! OUT=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'cat /etc/glversion 2>/dev/null; uptime' 2>&1); then
+    echo "$OUT" | head -5
+    if echo "$OUT" | grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED'; then
+        echo "host-ключи сменились (чистая прошивка?). Выполни: ssh-keygen -R 192.168.200.1 && ssh-keygen -R beryl, затем повтори."
+    fi
+    echo "после чистой прошивки: LAN = 192.168.8.1, пароль admin задаётся мастером, ssh root@192.168.8.1 → --host root@192.168.8.1"
+    exit 1
 fi
-[ -n "$TARBALL" ] && [ -f "$TARBALL" ] || { echo "tarball не найден (backups/beryl-*.tar.gz в $ROOT, или --tarball FILE)"; exit 1; }
+echo "$OUT"
+MODEL=$(ssh -o BatchMode=yes "$HOST" 'cat /proc/gl-hw-info/model 2>/dev/null' | tr -cd 'a-z0-9')
+[ -n "$MODEL" ] || { echo "не удалось прочитать модель (/proc/gl-hw-info/model)"; exit 1; }
+echo "модель: $MODEL"
+
+# ---------- 1. tarball (по модели) ----------
+if [ -z "$TARBALL" ]; then
+    TARBALL="$(ls -t "$ROOT"/backups/beryl-"$MODEL"-*.tar.gz 2>/dev/null | head -1 || true)"
+    [ -n "$TARBALL" ] || { echo "нет снапшота для модели $MODEL (backups/beryl-$MODEL-*.tar.gz). Старые файлы без модели в имени — только явно: --tarball FILE"; exit 1; }
+fi
+[ -f "$TARBALL" ] || { echo "tarball не найден: $TARBALL"; exit 1; }
 say "tarball: $TARBALL"
 case "$TARBALL" in
     *.enc)
@@ -134,17 +157,23 @@ case "$TARBALL" in
 esac
 INTAR=$(tar -tzf "$TARBALL")
 
-# ---------- 1. ssh ----------
-say "ssh $HOST"
-if ! OUT=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'cat /etc/glversion 2>/dev/null; uptime' 2>&1); then
-    echo "$OUT" | head -5
-    if echo "$OUT" | grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED'; then
-        echo "host-ключи сменились (чистая прошивка?). Выполни: ssh-keygen -R 192.168.200.1 && ssh-keygen -R beryl, затем повтори."
+# модель внутри снапшота (манифест Pipeline 3 или Pipeline 2) должна совпасть с роутером
+MAN=$(tar -xzf "$TARBALL" -O tmp/backup-manifest.txt 2>/dev/null || tar -xzf "$TARBALL" -O tmp/beryl-backup-manifest.txt 2>/dev/null || true)
+TB_HOST=$(printf '%s\n' "$MAN" | sed -n 's/^host: *//p' | head -1)
+TB_MODEL=$(printf '%s\n' "$MAN" | sed -n 's/^model: *//p' | head -1)
+[ -n "$TB_MODEL" ] || TB_MODEL=$(printf '%s' "$TB_HOST" | tr 'A-Z' 'a-z' | sed -E 's/^gl-//; s/[^a-z0-9]//g')   # GL-MT3000 → mt3000
+if [ -z "$TB_MODEL" ]; then
+    echo "в tarball нет манифеста с host:/model: — не могу проверить модель"; [ "$FORCE_MODEL" = 1 ] || exit 1
+elif [ "$TB_MODEL" != "$MODEL" ]; then
+    if [ "$FORCE_MODEL" = 1 ]; then
+        echo "ВНИМАНИЕ: снапшот от модели '$TB_MODEL' (host $TB_HOST), роутер — '$MODEL'. Продолжаю по --force-model: network/wireless не трогаем, но список выключаемых сервисов и пакетов — чужой."
+    else
+        echo "СТОП: снапшот от модели '$TB_MODEL' (host $TB_HOST), а роутер — '$MODEL'. Укажи снапшот своей модели (--tarball) или --force-model."
+        exit 1
     fi
-    echo "после чистой прошивки: LAN = 192.168.8.1, пароль admin задаётся мастером, ssh root@192.168.8.1 → --host root@192.168.8.1"
-    exit 1
+else
+    echo "модель снапшота совпадает: $TB_MODEL ($TB_HOST)"
 fi
-echo "$OUT"
 
 # ---------- 2. что отсутствует ----------
 say "проверка отсутствующих файлов на роутере"
