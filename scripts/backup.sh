@@ -60,6 +60,7 @@ PATHS=(
     /etc/wireguard                 # AmneziaWG obfuscation params (if enabled)
     /root
     /usr/sbin/beryl-config-backup  # the router-side self-backup script itself
+    /usr/sbin/gl-unhide-cn-menus   # CN-unit panel fix (no-op elsewhere), kept so restore can re-seed it
     # --- our deployment ---
     /usr/bin/sing-box
     /usr/bin/xray-panel-cli

@@ -65,6 +65,7 @@ PATHS="
 /etc/wireguard
 /root
 /usr/sbin/beryl-config-backup
+/usr/sbin/gl-unhide-cn-menus
 /usr/bin/sing-box
 /usr/bin/xray-panel-cli
 /etc/sing-box
