@@ -13,13 +13,44 @@
 # Idempotent. Re-run after every firmware upgrade (the firmware ships fresh JSON):
 # deploy/install.sh and scripts/restore-after-upgrade.sh call it automatically.
 # Not supported by GL.iNet. Does not touch the bootloader or the region code.
+#
+# 2026-10-27: the Beryl 7's region code was re-flashed CN -> US in the Factory
+# partition (see MIGRATION-BERYL7.md §8), so on that unit this script is a no-op
+# (the guard below exits before touching anything). Kept as a safety net for any
+# future CN unit.  --restore  puts every <file>.orig back (stock panel),
+# --force  applies the patches even when the country code is not CN.
 set -eu
 
 DIR=/usr/share/oui/menu.d
+MODE=apply; FORCE=0
+for a in "$@"; do
+    case "$a" in
+        --restore) MODE=restore ;;
+        --force)   FORCE=1 ;;
+        -h|--help) echo "usage: $0 [--restore|--force]"; exit 0 ;;
+        *) echo "unknown option: $a" >&2; exit 1 ;;
+    esac
+done
+
+if [ "$MODE" = restore ]; then
+    n=0
+    for o in "$DIR"/*.json.orig /www/views/*.js.gz.orig /www/js/app.*.js.gz.orig; do
+        [ -f "$o" ] || continue
+        f="${o%.orig}"
+        mv "$o" "$f"
+        case "$f" in *.gz) [ -f "${f%.gz}" ] && zcat "$f" > "${f%.gz}" ;; esac
+        echo "restored $f"
+        n=$((n + 1))
+    done
+    if [ "$n" -gt 0 ]; then /etc/init.d/nginx restart >/dev/null 2>&1 || true; fi
+    echo "restored $n file(s) to stock"
+    exit 0
+fi
+
 CC=$(cat /proc/gl-hw-info/country_code 2>/dev/null || echo "")
 case "$(echo "$CC" | tr 'A-Z' 'a-z')" in
     *cn*) ;;
-    *) echo "country_code='$CC' — not a CN unit, nothing to do"; exit 0 ;;
+    *) [ "$FORCE" = 1 ] || { echo "country_code='$CC' — not a CN unit, nothing to do"; exit 0; } ;;
 esac
 
 changed=0

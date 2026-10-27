@@ -9,7 +9,7 @@
 | Железо | MT7987A (Filogic 850), 4× Cortex-A53 2.0 ГГц, 512 МБ RAM, 512 МБ NAND, 2× 2.5G (eth0 WAN, eth1 LAN), USB 3.0, боковой переключатель gpio-465 |
 | Прошивка | была 4.8.7 release2 (2026-04-15) → **4.9.0 release1** (2026-07-07). База OpenWrt 21.02 MTK SDK, kernel 5.4.281, `aarch64_cortex-a53` — наши arm64-бинари идут без пересборки |
 | Чего нет | 4.11 для MT3600BE ещё нет → **mesh не поддерживается** (Beryl 7 в списке unsupported в доках GL); новый DNS-дашборд 4.11 тоже отсутствует. AmneziaWG 2.0 есть (4.9.0) |
-| Регион | **CN-юнит**, VPN-меню возвращены скриптом (см. ниже): `/proc/gl-hw-info/country_code = CN` (заводские данные, не прошивка). Образы прошивки на `fw.gl-inet.cn` и `fw.gl-inet.com` совпадают по sha256 |
+| Регион | **был CN-юнитом** (`/proc/gl-hw-info/country_code = CN`, заводские данные, не прошивка); **2026-10-27 перешит на US в разделе Factory (§6)**, панель стоковая, скрипт `gl-unhide-cn-menus` на нём no-op. Образы прошивки на `fw.gl-inet.cn` и `fw.gl-inet.com` совпадают по sha256 |
 
 ### Как CN-регион реально ограничивает
 - Бэкенд **ничего не блокирует**: `system.get_info` → `hidden_features: []`, `software_feature.vpn/adguard/obfuscation = true`; RPC `vpn-client`, `wg-client`, `wg-server` отвечают; пакеты wireguard/amneziawg/openvpn/adguardhome стоят и обновляются.
@@ -17,8 +17,8 @@
 - Служба `/etc/init.d/vpn-client` на юните выключена (S95vpn-client есть в /rom, в rc.d нет); в init-скрипте проверки страны нет.
 - Облако: `cloud.gl-inet.cn`, сервер обновлений `fw.gl-inet.cn`. Фиды opkg — международные `fw.gl-inet.com/releases/v21.02-SNAPSHOT/mt7987a/…`.
 - Официальная позиция GL: конвертация CN→Global не поддерживается, метод смены региона в загрузчике на форуме удалён по просьбе GL — не делаем.
-- **VPN-меню возвращены (применено 2026-10-26 20:20):** `/usr/sbin/gl-unhide-cn-menus` (в git: `router/usr/sbin/`) убирает `lang_hide` из семи JSON в `/usr/share/oui/menu.d/` (оригиналы рядом как `.orig`), перезапускает nginx и включает службу `vpn-client`. Идемпотентен, проверяет, что результат валидный JSON. Прошивка при апгрейде привозит новые JSON → скрипт вызывают `deploy/install.sh` и `restore-after-upgrade.sh`; сам скрипт в keep-list. Тем же скриптом (2026-10-27) правятся бандлы фронтенда (оригиналы `.orig`): плитки VPN/AdGuard на странице Internet (`gl-sdk4-ui-internet`: проверка `country_code…indexOf("cn")<0`), бейдж CN в шапке (`gl-sdk4-ui-home`, скрыт стилем), ссылка облака в `app.js` (`cloud.gl-inet.cn` → `goodcloud.xyz`), и сервер облака `gl-cloud.@cloud[0].server` → `gslb-eu.goodcloud.xyz` (как у flint2; демон подключился к EU-брокеру, токен CN сброшен). Что осталось CN-специфичного: сервер прошивок `fw.gl-inet.cn` (файлы те же), `cloud.get_bind_url` в Lua-байткоде по-прежнему строит cn-URL → привязка к GoodCloud делается с сайта goodcloud.xyz (Add Device: MAC/SN/DDNS), мобильное приложение GL может прятать VPN по своему. GL это не поддерживает.
-- **Где физически код страны:** в разделе `Factory` (mtd3, там же калибровка Wi-Fi); модуль ядра `gl-sdk4-hw-info.ko` читает его (`factory_data`, `lookup_country`) и публикует `/proc/gl-hw-info/country_code`, откуда его берут панель, gl-cloud, hostapd (регуляторные лимиты). Перезапись Factory = риск потерять калибровку/окирпичить, GL не поддерживает и просила метод не распространять — не делаем; все программные следствия сняты скриптом.
+- **VPN-меню возвращены (применено 2026-10-26 20:20):** `/usr/sbin/gl-unhide-cn-menus` (в git: `router/usr/sbin/`) убирает `lang_hide` из семи JSON в `/usr/share/oui/menu.d/` (оригиналы рядом как `.orig`), перезапускает nginx и включает службу `vpn-client`. Идемпотентен, проверяет, что результат валидный JSON. Прошивка при апгрейде привозит новые JSON → скрипт вызывают `deploy/install.sh` и `restore-after-upgrade.sh`; сам скрипт в keep-list. Тем же скриптом (2026-10-27) правятся бандлы фронтенда (оригиналы `.orig`): плитки VPN/AdGuard на странице Internet (`gl-sdk4-ui-internet`: проверка `country_code…indexOf("cn")<0`), бейдж CN в шапке (`gl-sdk4-ui-home`, скрыт стилем), ссылка облака в `app.js` (`cloud.gl-inet.cn` → `goodcloud.xyz`), и сервер облака `gl-cloud.@cloud[0].server` → `gslb-eu.goodcloud.xyz` (как у flint2; демон подключился к EU-брокеру, токен CN сброшен). Что осталось CN-специфичного: сервер прошивок `fw.gl-inet.cn` (файлы те же), `cloud.get_bind_url` в Lua-байткоде по-прежнему строит cn-URL → привязка к GoodCloud делается с сайта goodcloud.xyz (Add Device: MAC/SN/DDNS), мобильное приложение GL может прятать VPN по своему. GL это не поддерживает. **2026-10-27 всё снято `gl-unhide-cn-menus --restore` (10 файлов = /rom), т.к. регион перешит — §6.**
+- **Где физически код страны:** в разделе `Factory` (mtd3, там же калибровка Wi-Fi); модуль ядра `gl-sdk4-hw-info.ko` читает его (`factory_data`, `lookup_country`) и публикует `/proc/gl-hw-info/country_code`, откуда его берут панель, gl-cloud, hostapd (регуляторные лимиты). GL это не поддерживает; 2026-10-27 после полной проверки механики регион всё же перешит — §6.
 
 ## 2. Что сделано (по порядку)
 1. ssh-ключ `~/.ssh/beryl` → `/etc/dropbear/authorized_keys` (вручную с паролем), алиас `beryl7`.
@@ -49,3 +49,30 @@
 
 ## 5. Откат
 Старый Beryl AX полностью рабочий (4.11.0, всё на месте, последний снапшот 26.10 07:37Z). Включить, воткнуть кабель, `ssh beryl` (host-ключ AX: `ssh-keygen -R 192.168.200.1` перед первым заходом).
+
+## 6. Смена региона CN→US в разделе Factory (2026-10-27, ~16:15 UTC+4)
+
+**Механика (проверена на живом устройстве, не по докам):**
+- Device-tree: `/proc/device-tree/gl-hw/factory_data/country_code` = `Factory 0x4088` (рядом: `device_mac 0x4000`, `device_ddns 0x4010`, `device_sn_bak 0x4020`, `device_sn 0x4030`, `usb_power_mode 0x4100`, `device_cert 0x5000`).
+- `gl-sdk4-hw-info.ko` (`make_factory_data` → `lookup_country`): читает ровно 2 байта по этому смещению, `(b0<<8)|b1` ищет в таблице из 246 ISO-кодов (`00`, `AD`…`ZW`; есть `US`, `DE`, `GE`, `CN`; `EU` нет). Не найдено → пустая строка. Контрольной суммы над блоком нет. Читается один раз при загрузке модуля → после записи нужен reboot.
+- Раздел `mtd3 "Factory"`: 4 МиБ, SPI-NAND под NMBM (bad-блоки подменяются прозрачно), `flags=0x400` (writable), erase 256 КиБ. Данные только в блоке 0: калибровка Wi-Fi `0x0–0x407f`, поля GL в `0x4000–0x4100`, cert/key с `0x5000`. Блоки 1–9 = 0x00, 10–15 = 0xFF.
+- Кто читает код: панель (`system.get_info` → `countryCode` в UI; `wifi` RPC строит список каналов через `get_country_code`), `gl-cloud` (выбор `gslb` cn/eu), `gl-txpower-init` (сначала `uci wireless.*.country`, hw-код только fallback), `/etc/hotplug.d/kmwan/time_sync` (не-CN → chrony на Cloudflare NTS), `mptun` (CN → принудительно off), `upgrade` (код уходит в API gray-rollout; файлы прошивок те же).
+- Глобальный Beryl AX (EU-поставка) отдаёт `country_code=DE`, в `uci wireless` у него `DE` (2.4) / `GE` (5).
+
+**Сделано:**
+```bash
+# Mac
+ssh beryl7 'dd if=/dev/mtd3 bs=262144' > factory_original.bin      # sha256 5b507dcb… = живой раздел
+cp factory_original.bin factory_us.bin
+printf "US" | dd of=factory_us.bin bs=1 seek=$((0x4088)) conv=notrunc
+cmp -l factory_original.bin factory_us.bin                            # ровно 2 строки: 0x4088/0x4089
+scp -O factory_us.bin beryl7:/tmp/f.bin
+ssh beryl7 'sha256sum /tmp/f.bin && mtd write /tmp/f.bin Factory && mtd verify /tmp/f.bin Factory && reboot'
+ssh beryl7 'cat /proc/gl-hw-info/country_code'                      # US
+```
+Результат: `US`, sha256 mtd3 = `22442d08…` (= factory_us.bin). Само собой переключилось: chrony → `time.cloudflare.com` NTS, gl-cloud → `gslb-eu.goodcloud.xyz` (bound, SykkyB). `gl-unhide-cn-menus --restore` вернул 7 JSON + 3 бандла в сток (md5 = `/rom`), без аргументов скрипт теперь печатает `not a CN unit, nothing to do` (есть `--force`). `deploy/install.sh` и `restore-after-upgrade.sh` менять не нужно.
+
+**Бэкап/откат:** оригинал дампа — `home-lab/beryl-backups/factory/mt3600be-Factory-mtd3-20261027-original.bin` (+ `.sha256`) и R2 `beryl-snapshots/mt3600be-Factory-mtd3-20261027-original.bin.enc` (AES, тот же пароль, что снапшоты). Откат = `mtd write <original> Factory && reboot`. **Снять такой же дамп с Beryl AX при следующем включении** (там калибровка и cert тоже только в Factory).
+
+**Остаток:** `uci wireless.MT7993_1_1.country` / `MT7993_1_2.country` всё ещё `CN` — панель регион не выставляет (UI лишь читает `countryCode`), а `gl-txpower-init` берёт именно uci, поэтому список каналов в панели (по US) и регион драйвера (CN) расходятся. Привести в соответствие руками: `uci set wireless.MT7993_1_1.country=US; uci set wireless.MT7993_1_2.country=US; uci commit wireless; /etc/init.d/gl-txpower-init start; wifi` (или `GE`, как 5G на AX — регуляторно точнее для Грузии; `CountryRegionABand`: US=13, GE=2, CN=0).
+
