@@ -1,6 +1,7 @@
 #!/bin/sh
-# gl-unhide-cn-menus — show the VPN / AdGuard Home / DDNS / Tor entries in the
-# GL.iNet admin panel on a CN-region unit (/proc/gl-hw-info/country_code = CN).
+# gl-unhide-cn-menus — neutralise the CN-region cosmetics of the GL.iNet panel on a
+# CN unit (/proc/gl-hw-info/country_code = CN, stored in the Factory partition):
+# sidebar menus, Internet-page VPN/AdGuard tiles, CN badge, cloud link, cloud region.
 #
 # Mechanism (verified on GL-MT3600BE 4.9.0, 2026-10-26): the menu definitions in
 # /usr/share/oui/menu.d/*.json carry  "lang_hide": ["zh-cn"]  and the panel's
@@ -40,11 +41,67 @@ for f in "$DIR"/*.json; do
     ' && changed=$((changed + 1))
 done
 
+
+# --- frontend bundles: the Internet page hides the VPN/AdGuard tiles, the header
+# shows a "CN" badge and the Cloud page links to cloud.gl-inet.cn — all by the same
+# country check, hard-coded in the minified JS. Plain-text replacements on the
+# gzip-served bundles (originals kept as .orig). Idempotent: a bundle that no
+# longer contains the needle is skipped.
+patch_bundle() {   # $1 file.gz  $2 needle  $3 replacement
+    local f="$1" tmp="/tmp/gl-unhide.$$"
+    [ -f "$f" ] || return 0
+    zcat "$f" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+    if ! grep -qF -- "$2" "$tmp"; then rm -f "$tmp"; return 0; fi
+    [ -f "$f.orig" ] || cp "$f" "$f.orig"
+    NEEDLE="$2" REPL="$3" SRC="$tmp" lua -e '
+        local fh = assert(io.open(os.getenv("SRC"), "r")); local s = fh:read("*a"); fh:close()
+        local needle, repl = os.getenv("NEEDLE"), os.getenv("REPL")
+        local out, n, pos = {}, 0, 1
+        while true do
+            local i, j = s:find(needle, pos, true)
+            if not i then out[#out+1] = s:sub(pos); break end
+            out[#out+1] = s:sub(pos, i-1); out[#out+1] = repl; n = n + 1; pos = j + 1
+        end
+        fh = assert(io.open(os.getenv("SRC"), "w")); fh:write(table.concat(out)); fh:close()
+        print("  replaced " .. n .. "x")
+    '
+    gzip -9 -c "$tmp" > "$f" && rm -f "$tmp"
+    # an uncompressed twin, if the firmware ships one, must match
+    [ -f "${f%.gz}" ] && zcat "$f" > "${f%.gz}"
+    echo "patched $f"
+    changed=$((changed + 1))
+}
+V=/www/views
+patch_bundle "$V/gl-sdk4-ui-internet.common.js.gz" \
+    't.systemInfo.country_code.toLowerCase().indexOf("cn")<0' \
+    't.systemInfo.country_code.toLowerCase().indexOf("cn")<9'
+patch_bundle "$V/gl-sdk4-ui-home.common.js.gz" \
+    'e("span",{staticClass:"country-code"},' \
+    'e("span",{staticClass:"country-code",style:"display:none"},'
+for a in /www/js/app.*.js.gz; do
+    patch_bundle "$a" \
+        '"cn"===i.toLowerCase()?"https://cloud.gl-inet.cn":"https://www.goodcloud.xyz"' \
+        '"cn"===i.toLowerCase()?"https://www.goodcloud.xyz":"https://www.goodcloud.xyz"'
+done
+
 if [ "$changed" -gt 0 ]; then
     /etc/init.d/nginx restart >/dev/null 2>&1 || true
     echo "patched $changed file(s); nginx restarted — reload the panel (Cmd+Shift+R)"
 else
     echo "nothing to patch (already applied)"
+fi
+
+# GoodCloud: the daemon defaults to the CN region server by country code; the
+# server is a plain uci option, so pin the EU region (same as flint2) and let the
+# daemon re-authenticate (the CN token is useless there). Survives upgrades via
+# /etc/config, this is just self-healing.
+if [ "$(uci -q get gl-cloud.@cloud[0].server)" = "gslb.gl-inet.cn" ]; then
+    uci set gl-cloud.@cloud[0].old_server='gslb.gl-inet.cn'
+    uci set gl-cloud.@cloud[0].server='gslb-eu.goodcloud.xyz'
+    uci -q delete gl-cloud.@cloud[0].token
+    uci commit gl-cloud
+    /etc/init.d/gl-cloud restart >/dev/null 2>&1 || true
+    echo "gl-cloud server switched to gslb-eu.goodcloud.xyz"
 fi
 
 # GL's VPN client manager — enabled on the international units, was disabled here.
