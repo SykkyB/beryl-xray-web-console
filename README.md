@@ -150,6 +150,10 @@ beryl-xray-web-console/
 │   ├── xray-panel-cli.init                 # procd init для панели
 │   └── install.sh                          # cross-compile + scp + перезапуск
 │
+├── router/www/
+│   ├── xray-panel-launcher.js              # инъекция в GL UI (sidebar, карточка XRAY, Toggle Button)
+│   └── test/{hooktest,cardtest}.js         # симуляции launcher на node (без браузера)
+│
 ├── cmd/vless-vet/main.go                   # утилита: фильтр + сетевая проверка vless:// URL
 │
 └── scripts/
@@ -324,6 +328,17 @@ CORS: все `/api/*` отдают `Access-Control-Allow-Credentials: true` то
 
 Режим инъекции переключается в `/etc/xray-panel-cli/panel.yaml` (`injection.mode: dashboard | legacy | full`).
 
+#### Прошивки с туннельным VPN Dashboard (Beryl 7, 4.9.x) — Phase 4b, 2026-11-23
+
+На новом дашборде (ряд карточек «Tunnel 1 … Add New Tunnel») старая клон-карточка не монтируется, поэтому там launcher работает иначе:
+
+- **VPN Dashboard:** своя карточка **XRAY** в ряду туннелей — кнопка питания, статус, **список профилей прямо в карточке** (клик = активировать), Kill Switch, `Log`, `Panel ↗`; при работающем туннеле — Server Address / Exit IP / Traffic.
+- **System → Toggle Button Settings:** в штатном списке под **VPN** два варианта — `Tunnel N · WireGuard` и `XRAY (sing-box)`. Это и есть выбор, какому VPN принадлежит боковая кнопка. Apply переключает VPN целиком: другой гасится, выбранный поднимается по положению кнопки (кнопка в OFF = назначен, но не запущен).
+- Селектора «WireGuard VPN ↔ XRAY VPN» на карточке в этом дизайне нет — его заменяет страница Toggle Button Settings.
+- Нужен вход в панель `:9092` в том же браузере, иначе профили не покажутся, а Apply выдаст «XRAY panel needs login».
+
+Страница Toggle Button Settings дорисовывается не правкой DOM, а подменой ответов штатных RPC (`switch-button.get_funcs/get_config/set_config`, `vpn-client.get_tunnel`) — подробно в HANDOFF, раздел Phase 4b.
+
 Полная техническая раскладка — в [HANDOFF-DASHBOARD-INTEGRATION.md](HANDOFF-DASHBOARD-INTEGRATION.md).
 
 ---
@@ -373,6 +388,8 @@ CORS: все `/api/*` отдают `Access-Control-Allow-Credentials: true` то
 | Flip → OFF (`released`) | 1 | да (свободен) | `/etc/init.d/sing-box stop` + снять `prio 5500` |
 | Flip любой | 0 | — | пропускает (выход 0) |
 | Flip любой | 1 | привязан к WG/OVPN/Tor/AdGuard/Wi-Fi | пропускает (логирует, не вмешивается) |
+
+Кому принадлежит кнопка, выбирается в GL UI: на старом дашборде — селектором Side switch на карточке XRAY, на туннельном (Beryl 7, 4.9.x) — в **System → Toggle Button Settings → VPN → XRAY (sing-box)**. Если назначить кнопку штатной функции **без** нашего launcher (он не загружен: `injection.mode: legacy`, либо после прошивки ещё не запущен `deploy/install.sh` и `gl_home.html` без патча), `func` уезжает на `vpn`, hotplug начинает уступать, а `bind_switch` остаётся 1 — ровно так кнопка «перестала работать» 27.10.2026. С загруженным launcher уход с XRAY идёт через `/api/side-switch` и состояние остаётся согласованным. Лечение руками: `uci set switch-button.@main[0].func=xray; uci commit switch-button; /etc/init.d/sing-box bind_switch_on`.
 
 Сценарий «kill всё-таки активен» при flip→OFF: hotplug **снимает** `prio 5500` принудительно, потому что физический OFF трактуется как «хочу обычный роутер». То есть **физический переключатель в OFF превалирует над UCI killswitch=1**. Сделано чтобы не подвешивать LAN, когда юзер физически выключил VPN.
 
@@ -735,6 +752,13 @@ DONE in 47s — kept 11/30 (tcp_ok=30 tls_ok=28 vless_ok=11) → samples/raw.ali
 - [x] Stock UCI ключ `switch-button.@main[0].func='xray'` обрабатывается нашим hotplug; стоковый `/etc/rc.button/switch` пытается выполнить несуществующий `/etc/gl-switch.d/xray.sh` → no-op без `mcu_send_message` нотификации
 - [x] Backup-скрипт включает `/etc/config/switch-button` — состояние Phase 4 переживает rebuild прошивки
 
+### Phase 4b — туннельный VPN Dashboard (4.9.x) и Toggle Button Settings — done (2026-11-23)
+- [x] RPC-hook в launcher: XRAY как штатный пункт `VPN → XRAY (sing-box)` на `#/btnsettings`, Apply → `/api/side-switch`
+- [x] Правило «один VPN за раз» при выборе: уход с XRAY на туннель останавливает sing-box, выбор XRAY останавливает native
+- [x] Своя карточка XRAY (`xr2-*`) с инлайн-списком профилей для раскладки `.tunnels-container`
+- [x] Симуляционные тесты `router/www/test/` (fake XHR backend / fake DOM)
+- [ ] Карточка на экране «нет ни одного туннеля» (init-card) — не монтируется
+
 ### Phase 5 — VPN Scout (поиск конфигов из публичных списков) — done
 - [x] Рефакторинг `cmd/vless-vet` → `internal/vetlib/` (parse, probe, deep, pipeline) — переиспользуется панелью и CLI
 - [x] Country-detection: парсинг флаг-emoji из `#fragment` URL → ISO-2 → группа
@@ -753,7 +777,7 @@ DONE in 47s — kept 11/30 (tcp_ok=30 tls_ok=28 vless_ok=11) → samples/raw.ali
 - [ ] Latency-test через clash-API в UI
 - [ ] Edit/rename профилей (сейчас только Add/Activate/Delete)
 - [ ] Опциональный i18n (английский по умолчанию, русский opt-in)
-- [ ] Сплит launcher.js (~1950 строк) на модули (core / dashboard / drawer / log / side-switch)
+- [ ] Сплит launcher.js (~2600 строк) на модули (core / dashboard / tunnels-card / rpc-hook / drawer / log / side-switch)
 - [ ] Рефакторинг `cmd/vless-vet/{main,deep}.go` поверх `internal/vetlib/` (сейчас CLI и панель имеют параллельную копию логики)
 
 ---

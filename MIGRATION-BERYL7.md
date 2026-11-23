@@ -80,3 +80,20 @@ ssh beryl7 'uci set wireless.MT7993_1_1.country=US; uci set wireless.MT7993_1_2.
 ```
 Грабли: `wifi` без аргумента здесь только печатает usage (`wifi <up|down|reset|reload|restart|save|status>`); `gl-txpower-init start` сразу переписывает `/etc/wireless/mediatek/mt7993.b{0,1}.dat` (`CountryCode=US`, `CountryRegion=0`, `CountryRegionABand=13`), но `wifi reload` перечитывает только VIF-ы — драйвер остаётся в CN (`iwinfo rai0 countrylist` → `* CN`, 13 каналов, `iw reg get` → CN). Нужен **`wifi restart`**: после него `iwinfo rai0 countrylist` → `US`, `iwinfo rai0 freqlist` → 36–64, 100–144, 149–177 (27 каналов), 2.4G → 1–11, `iw reg get` → `98: DFS-FCC`; apclii0/wwan (репитер к flint2) падают и поднимаются сами через ~1 мин. Альтернатива для Грузии — `GE` (`CountryRegionABand=2`, как 5G на AX).
 
+## 7. Апгрейд 4.9.0 → 4.9.1 и launcher под туннельный дашборд (2026-11-23)
+
+**Повод:** инцидент GL.iNet CSA-2026-01 (взлом облака GoodCloud 20–21.11.2026, инъекция в обработчик AstroWarp облачного клиента). Чек-лист индикаторов и общий разбор — `HOME-INFRA.md` §5.1h. Beryl 7 был выключен с 14.11 08:40 по 23.11 14:09, окно атаки пропустил; проверка до и после апгрейда чистая (`/etc/mp_ip_mapping_info` нет, цепочки `SDWAN_IP_MAPPING` нет, `urandom_seed`/busybox/`gl-cloud` = `/rom`, чужих ключей и cron нет).
+
+**Апгрейд:** Online, Keep Settings, 14:18–14:20 (~1,5 мин). Перед ним: `beryl-config-backup --force` (R2) + `scripts/backup.sh beryl` (Mac + R2), образ `beryl-backups/fw/mt3600be-4.9.1_release1-1048-1123-1795380543.bin` (sha256 `3fb670be…`, сверен с `/tmp/firmware_sha256` роутера). После: `scripts/restore-after-upgrade.sh` → `deploy/install.sh beryl`; сверка baseline (WG 3 профиля + 1 пир сервера, md5 sing-box/xray/profiles, AdGuard, LAN, Wi-Fi/регион US, репитер, switch-button) сошлась.
+
+**Фикс в 4.9.1 устроен иначе, чем на MT6000/MT3000:** отдельного `mpifd/parameter_validator.lua` нет, проверка встроена в пересобранный `/usr/local/lib/lua/5.4/cloud/astrowarp.lua` (сборка 23.11, whitelist-паттерн `^[%w_%.:/+%-]+$`; `gl-sdk4-cloud git-2026.325`). После апгрейда появились слушатели `gl_nas_sys` 6000–6002 (правило WAN-drop на месте).
+
+**Грабли этого раза:**
+1. `scans/` панели не в keep-list (22 МБ в RAM при прошивке) → после апгрейда каталога нет. `restore-after-upgrade.sh` его не доливал: в `tar -tzf` каталог идёт со слешем (`etc/xray-panel-cli/scans/`), а сравнение было точным. Исправлено (`grep -qx -e "$f" -e "$f/"`).
+2. Ручная доливка `(cd stage && tar -czf - .) | ssh … tar -xzf -` притащила запись `./` с правами mktemp-каталога (700) и выставила **`/` на роутере в 700**. Починено `chmod 755 /`. Паковать по именам путей, не `.`; после любой ручной распаковки в `/` проверять `ls -ld /`.
+3. Пакет `zoneinfo-asia` restore-скрипт не переставляет, если файл `/usr/share/zoneinfo/Asia/Tbilisi` уже есть (он в keep-list) — время в логах верное, в `opkg list-installed` пакета нет. Не чинить.
+4. Beryl 7 сам выходит в интернет репитером к `XXX.v52`, как только включён, — «включить без WAN» для проверки не получается; GoodCloud подключается сразу.
+
+**Боковая кнопка и дашборд.** На 4.9.x VPN Dashboard туннельный, старые якоря launcher-а отсутствуют → карточка XRAY и селектор Side switch на Beryl 7 не работали с самого переноса. 27.10.2026 16:59 кнопку со штатной страницы назначили на `vpn`/`5003` (Tunnel 1 = WG-клиент `Flint2-GE`), наш hotplug стал уступать (`skip: switch-button bound to native 'vpn'`). 23.11 сделан Phase 4b (`HANDOFF-DASHBOARD-INTEGRATION.md`): пункт `VPN → XRAY (sing-box)` на странице Toggle Button Settings через подмену RPC и своя карточка XRAY с профилями в ряду туннелей. Состояние на конец дня: `switch-button.func=xray`, `sing-box.bind_switch=1`, Tunnel 1 выключен (`native_vpn_disabled=route_policy.@rule[0]`), кнопка в OFF.
+
+**GoodCloud** на Beryl 7 остался включён и привязан (решение владельца). В разборе RemoteToHome упомянута вторая, не закрытая на 22.11 слабость облачного клиента — см. `HOME-INFRA.md` §8.

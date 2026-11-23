@@ -184,7 +184,8 @@ else
     echo "$MISSING" | sed 's/^/  missing: /'
     TAKE=""
     for f in $MISSING; do
-        if echo "$INTAR" | grep -qx "$f"; then TAKE="$TAKE $f"; else echo "  (в tarball нет: $f)"; fi
+        # каталоги в tar-листинге идут со слешем на конце (etc/xray-panel-cli/scans/)
+        if echo "$INTAR" | grep -qx -e "$f" -e "$f/"; then TAKE="$TAKE $f"; else echo "  (в tarball нет: $f)"; fi
     done
     if [ -n "$TAKE" ]; then
         mkdir -p "$TMP/stage"

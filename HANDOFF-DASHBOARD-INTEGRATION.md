@@ -68,6 +68,108 @@ small UCI key change.
 
 ---
 
+## Phase 4b — tunnels-layout dashboard + btnsettings (2026-11-23)
+
+**Why:** firmware 4.9.x on Beryl 7 (GL-MT3600BE) ships a redesigned VPN
+Dashboard: a row of tunnel cards
+(`.vpn-dashboard-wrapper .tunnels-container` → `tunnel-card`… →
+`.add-tunnel-card`) instead of the single-mode card. None of the Phase 3
+clone anchors (`.single-mode-wrapper`, `.gl-card-wrapper.single-mode-card`,
+`.kill-switch-tag`, `ul.infos.label-list`) exist there, so the XRAY card
+and the Side-switch selector silently never mounted on that unit (since
+the 2026-10-26 migration). The physical switch then got re-assigned to
+the native `vpn`/Tunnel 1 from the stock Toggle Button page (2026-10-27)
+and our hotplug yielded — "the switch does nothing for XRAY".
+
+Both pieces live in `router/www/xray-panel-launcher.js`; the Go backend
+is unchanged (same `/api/side-switch`, `/api/service`, `/api/profiles`).
+
+### 1. Toggle Button Settings (`#/btnsettings`) — RPC rewriting, not DOM
+
+The stock page builds its cascader from RPC payloads, so we rewrite the
+payloads in flight and let the page render XRAY natively:
+
+| Stock RPC (POST `/rpc`, axios/XHR) | What the launcher does |
+|---|---|
+| `switch-button.get_funcs` | adds `{func:"xray"}` to `vpn.sub_func` |
+| `vpn-client.get_tunnel` (only while on `#/btnsettings`) | appends fake tunnel `{tunnel_id:"xray", name:"XRAY (sing-box)"}` (label source); native names get ` · WireGuard` / ` · OpenVPN` |
+| `switch-button.get_config` | uci `func=xray` is presented as `{func:"vpn", sub_func:"xray"}` |
+| `switch-button.check_sync_status` for xray | answered `{sync_status:1}` |
+| `switch-button.set_config` **to** xray | `POST /api/side-switch {on:true}` (stops native VPN if up, binds the switch, syncs sing-box to the switch position) |
+| `switch-button.set_config` **away from** xray | `POST /api/side-switch {on:false}`, then `POST /api/service {action:"stop"}` if the new choice is a `vpn` tunnel, then the stock call goes through |
+
+Mechanics (`installRpcHook`): `XMLHttpRequest.prototype.open/send` are
+wrapped. Our `readystatechange` listener is registered in `open()`, i.e.
+before axios attaches its handler, and shadows `responseText`/`response`
+with instance getters. Intercepted calls are swapped for a harmless
+`switch-button.get_config` so the stock backend never sees `xray` and
+the SPA still gets a well-formed reply. Sends are deferred until
+`/api/launcher-config` resolved (`modeReady`); in `legacy` mode
+everything passes through untouched.
+
+**Owner's rule (2026-11-23):** choosing a VPN on this page switches the
+whole VPN, not just the binding — the other one is stopped, the chosen
+one comes up according to the physical switch position (OFF = assigned
+but not started, same as stock).
+
+Requires a basic-auth login to `:9092` in the same browser (cross-origin
+`credentials: "include"`); otherwise Apply shows
+`XRAY panel needs login: open http://<router>:9092 once, then retry`.
+
+This supersedes the old "variant B declined" note below: variant B was
+declined as a *Vue-store/DOM* hack; RPC rewriting needs neither.
+
+### 2. VPN Dashboard — own card for the tunnels layout
+
+`renderDashCard()` falls through to `renderTunnelsCard()` when the
+single-mode wrapper is absent. The card is built from scratch (classes
+`xr2-*`, theme CSS variables, no cloning), inserted before
+`.add-tunnel-card`:
+
+- power button → existing `toggleService()` (native-VPN mutex included)
+- status line (Connected / Disconnected / Working… / Panel not reachable)
+- **inline profile list** — click a row = `POST /api/profiles/{id}/activate`
+  (no drawer on this layout)
+- Kill Switch tag (click = toggle), Side-switch tag (shown only when the
+  switch is bound to XRAY — the binding itself is changed on
+  `#/btnsettings`), `Log` (existing log drawer), `Panel ↗`
+- when running: Server Address, Exit IP, Traffic
+
+All writes are change-detected (`xr2Text`, `data-xr2-sig`) because the
+body-wide MutationObserver would otherwise re-trigger on our own updates.
+
+Limitations: no card on the stock "init" screen (zero tunnels → no
+`.tunnels-container`); look is close to, not identical with, the stock
+card (scoped `data-v-*` CSS is not reused).
+
+### 3. Tests (no browser needed)
+
+```bash
+node router/www/test/hooktest.js   # RPC rewriting vs a fake router backend
+node router/www/test/cardtest.js   # tunnels card vs a fake DOM
+```
+
+`hooktest` must end with
+`side-switch calls: [true,false,"service:stop",true]` and the stock
+backend must only ever see `get_funcs`, `get_tunnel`, `get_config` and
+one `set_config{"func":"vpn","sub_func":"5003",…}`. `cardtest` must show
+the card at position 1 of 3, `is-on` + `Connected` after the power click,
+and the active marker moving to `DE-1`.
+
+### 4. Recon for the next firmware bump
+
+```bash
+ssh beryl 'zcat /www/views/gl-sdk4-ui-vpndashboard.common.js.gz' | grep -o 'staticClass:"[^"]*"' | sort | uniq -c | sort -rn | head -40
+ssh beryl 'zcat /www/views/gl-sdk4-ui-btnsettings.common.js.gz' | grep -o '"switch-button","[a-z_]*"' | sort -u
+ssh beryl 'ubus -S call gl-session call "{\"module\":\"switch-button\",\"func\":\"get_funcs\"}"'
+```
+
+If the card stops mounting, check `.vpn-dashboard-wrapper .tunnels-container`
+and `.add-tunnel-card`; if XRAY disappears from the Toggle Button list,
+check that the page still uses `get_funcs` / `get_tunnel` / `get_config`.
+
+---
+
 ## Architecture (cross-cutting)
 
 ```
@@ -343,9 +445,9 @@ uci commit sing-box
 
 ### Features deferred
 
-- Phase 4 variant B (cascader injection in btnsettings) — explicitly
-  declined by user. The Side-switch tag on the dashboard is the
-  chosen UX. Variant B remains as a fallback if user changes mind.
+- ~~Phase 4 variant B (cascader injection in btnsettings)~~ — done
+  2026-11-23 as RPC rewriting (Phase 4b above), at the owner's request:
+  on the tunnels-layout firmware the dashboard selector does not exist.
 - Bandwidth / connection visualization beyond the simple traffic
   totals (sparkline of clash-API rates).
 - Persistent log filter / search in View Log drawer (currently raw
@@ -355,7 +457,8 @@ uci commit sing-box
 
 ### Code hygiene
 
-- `xray-panel-launcher.js` is now ~1950 lines in a single IIFE.
+- `xray-panel-launcher.js` is now ~2600 lines in a single IIFE
+  (Phase 4b added the RPC hook and the tunnels card).
   Split into modules (`core`, `dashboard`, `drawer`, `log`,
   `side-switch`) if continuing further. Each is independently
   loadable.

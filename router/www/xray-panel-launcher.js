@@ -618,9 +618,294 @@
     // Build XRAY card by cloning native single-mode-card and rewriting
     // labels + handlers. Idempotent — if card already exists, just
     // updates its contents from state.
+    // ── Tunnels-layout card (firmware with the multi-tunnel dashboard) ─
+    //
+    // GL.iNet 4.9+ on MT3600BE replaced the single-mode card with a row
+    // of tunnel cards (.tunnels-container > tunnel-card … add-tunnel-card).
+    // None of the old clone anchors exist there, so this card is built
+    // from scratch with our own xr2-* classes and the theme's CSS
+    // variables. It sits in the same flex row, before "Add New Tunnel",
+    // and lists the XRAY profiles inline (click = activate).
+    var XR2_CSS_ID = "xray-tunnels-card-style";
+
+    function injectXr2CSS() {
+        if (document.getElementById(XR2_CSS_ID)) return;
+        var st = document.createElement("style");
+        st.id = XR2_CSS_ID;
+        st.textContent = [
+            ".xr2-card{flex-shrink:0;width:350px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;padding:12px 20px 20px;border-radius:5px;",
+            "background:linear-gradient(180deg,var(--xr2-grad,var(--background-title)),var(--background-header));box-shadow:2px 4px 8px 0 var(--shadow);",
+            "--xr2-state:var(--text-disabled);font-size:14px;color:var(--text-title)}",
+            ".xr2-card.is-on{--xr2-state:var(--success);--xr2-grad:var(--secondary-background)}",
+            ".xr2-card.is-busy{--xr2-state:var(--warning);--xr2-grad:var(--warning-background)}",
+            ".xr2-head{display:flex;align-items:center;gap:8px;min-height:24px;color:var(--text-weak)}",
+            ".xr2-head .xr2-grow{flex:1}",
+            ".xr2-tag{font-size:12px;line-height:18px;padding:0 6px;border:1px solid var(--text-disabled);border-radius:4px;color:var(--text-weak);cursor:pointer;user-select:none;white-space:nowrap}",
+            ".xr2-tag.is-on{border-color:var(--secondary);color:var(--secondary)}",
+            ".xr2-tag.is-static{cursor:default}",
+            ".xr2-link{color:var(--text-weak);cursor:pointer;text-decoration:none;font-size:12px}",
+            ".xr2-link:hover{color:var(--primary)}",
+            ".xr2-name{font-size:24px;font-weight:700;text-align:center}",
+            ".xr2-power{align-self:center;width:108px;height:108px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;",
+            "background:radial-gradient(circle,var(--background-header) 0 38%,transparent 39%),radial-gradient(circle,var(--xr2-state) 0 50%,transparent 51%);opacity:.92}",
+            ".xr2-power:hover{opacity:1}",
+            ".xr2-power svg{width:34px;height:34px;stroke:var(--xr2-state);fill:none;stroke-width:2.4;stroke-linecap:round}",
+            ".xr2-status{font-weight:700;text-align:center;color:var(--xr2-state);line-height:22px}",
+            ".xr2-hint{font-size:12px;line-height:18px;text-align:center;color:var(--text-weak);min-height:18px}",
+            ".xr2-list{background:var(--background-header);border:1px solid var(--divider);border-radius:5px;max-height:190px;overflow-y:auto}",
+            ".xr2-list-title{padding:8px 12px 4px;font-size:12px;color:var(--text-disabled)}",
+            ".xr2-row{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-top:1px solid var(--divider)}",
+            ".xr2-row:hover{background:var(--background-title)}",
+            ".xr2-dot{flex-shrink:0;width:12px;height:12px;border-radius:50%;border:2px solid var(--text-disabled);box-sizing:border-box}",
+            ".xr2-row.is-active .xr2-dot{border-color:var(--success);background:var(--success)}",
+            ".xr2-row-main{flex:1;min-width:0}",
+            ".xr2-row-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+            ".xr2-row.is-active .xr2-row-name{font-weight:700}",
+            ".xr2-row-sub{font-size:12px;line-height:18px;color:var(--text-weak);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+            ".xr2-empty{padding:10px 12px;font-size:12px;color:var(--text-weak);border-top:1px solid var(--divider)}",
+            ".xr2-info{display:flex;flex-direction:column}",
+            ".xr2-info-row{display:flex;justify-content:space-between;gap:10px;padding:8px 8px 0}",
+            ".xr2-info-row span:first-child{font-size:12px;line-height:18px;color:var(--text-disabled);white-space:nowrap}",
+            ".xr2-info-row span:last-child{text-align:right;overflow-wrap:anywhere}",
+            "@media (max-width:767px){.xr2-card{width:100%}}"
+        ].join("");
+        document.head.appendChild(st);
+    }
+
+    function xr2El(tag, cls, text) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text != null) e.textContent = text;
+        return e;
+    }
+
+    // Write only on change — our own DOM writes feed the body-wide
+    // MutationObserver, so idle polls must not touch the tree.
+    function xr2Text(el, txt) {
+        txt = txt == null ? "" : String(txt);
+        if (el && el.textContent !== txt) el.textContent = txt;
+    }
+    function xr2Class(el, cls, on) {
+        if (!el) return;
+        if (!!on !== el.classList.contains(cls)) el.classList.toggle(cls, !!on);
+    }
+
+    function findTunnelsContainer() {
+        return document.querySelector(".vpn-dashboard-wrapper .tunnels-container");
+    }
+
+    function buildTunnelsCard() {
+        injectXr2CSS();
+        var card = xr2El("div", "xr2-card");
+        card.setAttribute("data-xray-card", "1");
+        card.setAttribute("data-xray-layout", "tunnels");
+
+        var head = xr2El("div", "xr2-head");
+        var ks = xr2El("span", "xr2-tag", "Kill Switch");
+        ks.setAttribute("data-xr2", "ks");
+        ks.title = "Block traffic when the XRAY tunnel is down (click to toggle)";
+        ks.addEventListener("click", function () { try { toggleKillswitch(); } catch (e) {} });
+        var sw = xr2El("span", "xr2-tag is-static", "Side switch");
+        sw.setAttribute("data-xr2", "sw");
+        sw.title = "Physical side switch is bound to XRAY — change in System → Toggle Button Settings";
+        var grow = xr2El("span", "xr2-grow");
+        var log = xr2El("a", "xr2-link", "Log");
+        log.addEventListener("click", function () { try { openXrayLogDrawer(); } catch (e) {} });
+        var open = xr2El("a", "xr2-link", "Panel ↗");
+        open.href = panelURL();
+        open.target = "_blank";
+        open.rel = "noopener";
+        head.appendChild(ks); head.appendChild(sw); head.appendChild(grow);
+        head.appendChild(log); head.appendChild(open);
+
+        var name = xr2El("div", "xr2-name", "XRAY");
+
+        var power = xr2El("div", "xr2-power");
+        power.setAttribute("role", "button");
+        power.setAttribute("data-xr2", "power");
+        power.innerHTML = "<svg viewBox=\"0 0 24 24\"><path d=\"M12 3v9\"/><path d=\"M6.3 6.8a8 8 0 1 0 11.4 0\"/></svg>";
+        power.addEventListener("click", function () {
+            if (card.getAttribute("data-xr2-busy") === "1") return;
+            card.setAttribute("data-xr2-busy", "1");
+            xr2Class(card, "is-busy", true);
+            setTimeout(function () {
+                card.removeAttribute("data-xr2-busy");
+                try { renderTunnelsCard(); } catch (e) {}
+            }, 4000);
+            try { toggleService(); } catch (e) {}
+        });
+
+        var status = xr2El("div", "xr2-status", "…");
+        status.setAttribute("data-xr2", "status");
+        var hint = xr2El("div", "xr2-hint", "");
+        hint.setAttribute("data-xr2", "hint");
+
+        var list = xr2El("div", "xr2-list");
+        list.setAttribute("data-xr2", "list");
+
+        var info = xr2El("div", "xr2-info");
+        info.setAttribute("data-xr2", "info");
+
+        card.appendChild(head); card.appendChild(name); card.appendChild(power);
+        card.appendChild(status); card.appendChild(hint); card.appendChild(list);
+        card.appendChild(info);
+        return card;
+    }
+
+    function activateXrayProfileById(id, profName) {
+        var banner = showXrayBanner("Activating " + (profName || "profile") + "…", "progress");
+        apiFetch("/api/profiles/" + encodeURIComponent(id) + "/activate", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: "{}"
+        }).then(function (r) {
+            return r.json().then(function (j) { return {ok: r.ok, status: r.status, body: j}; },
+                                 function () { return {ok: r.ok, status: r.status, body: null}; });
+        }).then(function (res) {
+            if (res.ok) {
+                var h = "";
+                if (res.body) {
+                    if (res.body.switched) h = " (instant switch)";
+                    else if (res.body.reloaded) h = " (reloaded)";
+                    else if (res.body.started) h = " (service started)";
+                    else if (res.body.pending_switch) h = " (pending — flip side switch ON)";
+                }
+                updateXrayBanner(banner, "Activated " + (profName || "profile") + h + " ✓", "success");
+                setTimeout(function () { hideXrayBanner(banner); }, 2800);
+            } else {
+                var err = (res.body && res.body.error) || ("HTTP " + res.status);
+                updateXrayBanner(banner, "Activation failed: " + err, "error");
+                setTimeout(function () { hideXrayBanner(banner); }, 5600);
+            }
+            dashProfiles = null;      // re-read the list (active marker)
+            pollDash(true);
+        }).catch(function (err) {
+            updateXrayBanner(banner, "Network error: " + (err && err.message), "error");
+            setTimeout(function () { hideXrayBanner(banner); }, 5600);
+            pollDash(true);
+        });
+    }
+
+    function xr2ProfilesSig(profiles, activeID) {
+        var s = String(activeID || "");
+        for (var i = 0; i < profiles.length; i++) {
+            var p = profiles[i];
+            s += "|" + p.id + ":" + p.name + ":" + p.server + ":" + p.port + ":" + (p.security || "");
+        }
+        return s;
+    }
+
+    function renderXr2Profiles(list, profiles, activeID, loaded) {
+        var sig = loaded ? xr2ProfilesSig(profiles, activeID) : "loading";
+        if (list.getAttribute("data-xr2-sig") === sig) return;
+        list.setAttribute("data-xr2-sig", sig);
+        while (list.firstChild) list.removeChild(list.firstChild);
+        list.appendChild(xr2El("div", "xr2-list-title", "Profiles"));
+        if (!loaded) {
+            list.appendChild(xr2El("div", "xr2-empty",
+                "Not available — log in to the XRAY panel once (Panel ↗), then reload this page."));
+            return;
+        }
+        if (!profiles.length) {
+            list.appendChild(xr2El("div", "xr2-empty", "No profiles yet — add one in the XRAY panel."));
+            return;
+        }
+        profiles.forEach(function (p) {
+            var row = xr2El("div", "xr2-row" + (p.id === activeID ? " is-active" : ""));
+            row.appendChild(xr2El("span", "xr2-dot"));
+            var main = xr2El("div", "xr2-row-main");
+            main.appendChild(xr2El("div", "xr2-row-name", p.name || p.server || p.id));
+            var sub = (p.server || "") + (p.port ? ":" + p.port : "");
+            var kind = [(p.security || "").toUpperCase(), (p.type || "tcp").toUpperCase()].filter(Boolean).join(" · ");
+            main.appendChild(xr2El("div", "xr2-row-sub", sub + (kind ? "  " + kind : "")));
+            row.appendChild(main);
+            row.title = p.id === activeID ? "Active profile" : "Click to activate";
+            row.addEventListener("click", function () {
+                if (p.id === activeID) return;
+                activateXrayProfileById(p.id, p.name);
+            });
+            list.appendChild(row);
+        });
+    }
+
+    function renderXr2Info(info, rows) {
+        var sig = rows.map(function (r) { return r[0] + "=" + r[1]; }).join("|");
+        if (info.getAttribute("data-xr2-sig") === sig) return;
+        info.setAttribute("data-xr2-sig", sig);
+        while (info.firstChild) info.removeChild(info.firstChild);
+        rows.forEach(function (r) {
+            var row = xr2El("div", "xr2-info-row");
+            row.appendChild(xr2El("span", null, r[0]));
+            row.appendChild(xr2El("span", null, r[1]));
+            info.appendChild(row);
+        });
+    }
+
+    function renderTunnelsCard() {
+        var container = findTunnelsContainer();
+        if (!container) return false;
+        var card = container.querySelector("[data-xray-card='1']");
+        if (!card) {
+            card = buildTunnelsCard();
+            var add = container.querySelector(".add-tunnel-card");
+            if (add && add.parentNode === container) container.insertBefore(card, add);
+            else container.appendChild(card);
+        }
+        function part(k) { return card.querySelector("[data-xr2='" + k + "']"); }
+        function val(b) { return b && b.ok !== false ? b.value : undefined; }
+
+        var st = dashState || {};
+        var haveState = !!dashState;
+        var running = val(st.service) === true;
+        var tunUp = val(st.tun) === true;
+        var bind = val(st.bind_switch) === true || val(st.sw_func) === "xray";
+        var phys = val(st.physical_switch);
+        var physOn = phys === true || phys === "on" || phys === "ON" || phys === 1 || phys === "1";
+        var physKnown = phys !== undefined && phys !== null && phys !== "";
+        var busy = card.getAttribute("data-xr2-busy") === "1";
+
+        xr2Class(card, "is-on", running && !busy);
+        xr2Class(card, "is-busy", busy);
+        xr2Text(part("status"),
+            !haveState ? "Panel not reachable"
+            : busy ? "Working…"
+            : running ? (tunUp ? "Connected" : "Running (TUN down)")
+            : "Disconnected");
+
+        var hint = "";
+        if (haveState) {
+            if (bind && physKnown && !physOn && !running) hint = "Side switch is OFF — flip it to start";
+            else if (bind) hint = "Follows the physical side switch";
+            else if (val(st.native_vpn_active) === true && running) hint = "A native VPN tunnel is also up";
+        } else {
+            hint = "Log in at Panel ↗ once, then reload";
+        }
+        xr2Text(part("hint"), hint);
+
+        var ks = part("ks");
+        xr2Class(ks, "is-on", val(st.killswitch) === true);
+        var sw = part("sw");
+        if (sw) sw.style.display = bind ? "" : "none";
+        xr2Class(sw, "is-on", bind);
+
+        var ap = val(st.active_profile);
+        var activeID = (ap && ap.id) || (dashProfiles && dashProfiles.active_id) || "";
+        var profiles = (dashProfiles && dashProfiles.profiles) || [];
+        renderXr2Profiles(part("list"), profiles, activeID, !!dashProfiles);
+
+        var rows = [];
+        if (running) {
+            if (ap && ap.server) rows.push(["Server Address", ap.server + (ap.port ? ":" + ap.port : "")]);
+            if (liveExitIP) rows.push(["Exit IP", liveExitIP]);
+            rows.push(["Traffic Statistics", formatTraffic()]);
+        }
+        renderXr2Info(part("info"), rows);
+        return true;
+    }
+
     function renderDashCard() {
         var wrapper = findDashWrapper();
-        if (!wrapper) return false;
+        if (!wrapper) return renderTunnelsCard();
         // Look up by data-attribute, not id: purgeIds() strips ids
         // (intentional — we don't want to inherit native scoped ids),
         // so the only durable marker is our own data-xray-card attr.
@@ -2035,6 +2320,211 @@
         startDashTimer();
     }
 
+    // ── btnsettings integration — XRAY in the stock Toggle Button list ─
+    //
+    // The stock #/btnsettings page builds its cascader from two RPCs
+    // (switch-button.get_funcs, vpn-client.get_tunnel) and reads/writes
+    // the binding via switch-button.get_config / set_config. Instead of
+    // touching its Vue-owned DOM we rewrite those RPC payloads in
+    // flight, so the page itself renders "VPN → XRAY (sing-box)" next
+    // to the native tunnels, shows it as selected when the switch is
+    // ours (uci func=xray), and Apply goes through /api/side-switch
+    // (same transactional path as the old dashboard selector).
+    //
+    //   get_funcs          + {func:"xray"} under vpn.sub_func
+    //   get_tunnel         + fake tunnel {tunnel_id:"xray"} (label source),
+    //                        native names get their VPN type appended
+    //                        (only while on #/btnsettings)
+    //   get_config         func=xray  →  {func:"vpn", sub_func:"xray"}
+    //   check_sync_status  for xray   →  {sync_status:1} (nothing to sync)
+    //   set_config         to xray    →  POST /api/side-switch {on:true}
+    //                      away from xray → {on:false} first, then stock
+    //
+    // Stock RPC never sees "xray": intercepted calls are swapped for a
+    // harmless get_config so the SPA still gets a well-formed reply.
+    var BTN_HASH_RX = /^#\/btnsettings/i;
+    var XRAY_SUB = "xray";
+    var XRAY_LABEL = "XRAY (sing-box)";
+    var btnRawFunc = null;        // last uci func as the router reported it
+    var modeResolve = null;
+    var modeReady = new Promise(function (res) { modeResolve = res; });
+
+    function dashMode() { return MODE === "dashboard" || MODE === "full"; }
+
+    function sideSwitchCall(on) {
+        return apiFetch("/api/side-switch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ on: !!on })
+        }).then(function (r) {
+            if (r.ok) return null;
+            if (r.status === 401) {
+                return "XRAY panel needs login: open http://" + location.hostname + ":" + PORT + " once, then retry";
+            }
+            return r.text().then(function (t) { return "XRAY panel: HTTP " + r.status + " " + String(t).slice(0, 120); });
+        }).catch(function (e) {
+            return "XRAY panel unreachable (" + (e && e.message || e) + ")";
+        });
+    }
+
+    function rewriteFuncs(res) {
+        if (!res || !Array.isArray(res.funcs)) return res;
+        var vpn = null;
+        res.funcs.forEach(function (f) { if (f && f.func === "vpn") vpn = f; });
+        if (!vpn) { vpn = { func: "vpn", sub_func: [] }; res.funcs.push(vpn); }
+        if (!Array.isArray(vpn.sub_func)) vpn.sub_func = [];
+        var has = vpn.sub_func.some(function (s) { return s && s.func === XRAY_SUB; });
+        if (!has) vpn.sub_func.push({ func: XRAY_SUB });
+        return res;
+    }
+
+    function rewriteTunnels(res) {
+        if (!res || !BTN_HASH_RX.test(location.hash)) return res;
+        if (!Array.isArray(res.tunnels)) res.tunnels = [];
+        var typeNames = { wireguard: "WireGuard", openvpn: "OpenVPN" };
+        res.tunnels.forEach(function (t) {
+            var ty = t && t.via && typeNames[t.via.type];
+            if (ty && t.name && String(t.name).indexOf(ty) < 0) t.name = t.name + " · " + ty;
+        });
+        res.tunnels.push({ tunnel_id: XRAY_SUB, name: XRAY_LABEL, enabled: false });
+        return res;
+    }
+
+    function rewriteBtnConfig(res) {
+        if (!res) return res;
+        btnRawFunc = res.func || null;
+        if (res.func === "xray") { res.func = "vpn"; res.sub_func = XRAY_SUB; }
+        return res;
+    }
+
+    // Replace what the SPA reads from a finished XHR. Instance-level
+    // getters shadow the prototype ones; our readystatechange listener
+    // is registered in open(), i.e. before axios attaches its own
+    // handler, so the SPA only ever sees the rewritten text.
+    function applyRpcRewrite(xhr) {
+        var fn = xhr.__xrayRewrite;
+        xhr.__xrayRewrite = null;
+        var text;
+        try { text = xhr.responseText; } catch (e) { return; }
+        var doc;
+        try { doc = JSON.parse(text); } catch (e) { return; }
+        if (!doc || typeof doc !== "object") return;
+        var out;
+        try { out = fn(doc.result); } catch (e) { return; }
+        doc.result = out;
+        if (doc.error) delete doc.error;
+        var newText = JSON.stringify(doc);
+        try {
+            Object.defineProperty(xhr, "responseText", { configurable: true, get: function () { return newText; } });
+            Object.defineProperty(xhr, "response", {
+                configurable: true,
+                get: function () { return xhr.responseType === "json" ? JSON.parse(newText) : newText; }
+            });
+        } catch (e) {}
+    }
+
+    function installRpcHook() {
+        var XHR = window.XMLHttpRequest;
+        if (!XHR || XHR.prototype.__xrayRpcHooked) return;
+        XHR.prototype.__xrayRpcHooked = true;
+        var origOpen = XHR.prototype.open;
+        var origSend = XHR.prototype.send;
+
+        XHR.prototype.open = function (method, url) {
+            var isRpc = String(method).toUpperCase() === "POST" &&
+                        /(^|\/)rpc(\?|$)/.test(String(url).split("#")[0]);
+            this.__xrayRpc = isRpc;
+            if (isRpc) {
+                var xhr = this;
+                xhr.addEventListener("readystatechange", function () {
+                    if (xhr.readyState === 4 && xhr.__xrayRewrite) applyRpcRewrite(xhr);
+                });
+            }
+            return origOpen.apply(this, arguments);
+        };
+
+        XHR.prototype.send = function (body) {
+            var xhr = this;
+            var args = arguments;
+            function pass() { return origSend.apply(xhr, args); }
+            if (!xhr.__xrayRpc || typeof body !== "string") return pass();
+            if (body.indexOf("switch-button") < 0 && body.indexOf("get_tunnel") < 0) return pass();
+            var req;
+            try { req = JSON.parse(body); } catch (e) { return pass(); }
+            var p = req && req.params;
+            if (!Array.isArray(p) || p.length < 3) return pass();
+            var mod = p[1], fn = p[2], arg = p[3] || {};
+            var ours = (mod === "switch-button" &&
+                            (fn === "get_funcs" || fn === "get_config" ||
+                             fn === "set_config" || fn === "check_sync_status")) ||
+                       (mod === "vpn-client" && fn === "get_tunnel");
+            if (!ours) return pass();
+
+            // Same request, but calling switch-button.get_config: used
+            // when the stock backend must not see the real call.
+            function harmlessBody() {
+                var c = JSON.parse(body);
+                c.params = [p[0], "switch-button", "get_config", {}];
+                return JSON.stringify(c);
+            }
+            function sendRaw(b) {
+                try { origSend.call(xhr, b); } catch (e) {}
+            }
+            function reply(result) {
+                xhr.__xrayRewrite = function () { return result; };
+                sendRaw(harmlessBody());
+            }
+
+            modeReady.then(function () {
+                if (!dashMode()) { sendRaw(body); return; }
+
+                if (mod === "vpn-client") { xhr.__xrayRewrite = rewriteTunnels; sendRaw(body); return; }
+                if (fn === "get_funcs") { xhr.__xrayRewrite = rewriteFuncs; sendRaw(body); return; }
+                if (fn === "get_config") { xhr.__xrayRewrite = rewriteBtnConfig; sendRaw(body); return; }
+
+                var toXray = arg && arg.func === "vpn" && String(arg.sub_func) === XRAY_SUB;
+
+                if (fn === "check_sync_status") {
+                    if (toXray) reply({ sync_status: 1 }); else sendRaw(body);
+                    return;
+                }
+
+                // set_config
+                if (toXray) {
+                    sideSwitchCall(true).then(function (err) {
+                        if (err) { reply({ err_code: -1, err_msg: err }); return; }
+                        btnRawFunc = "xray";
+                        reply({});
+                    });
+                    return;
+                }
+                if (btnRawFunc === "xray") {
+                    // Leaving XRAY: release our claim (restores the stock
+                    // func, clears bind_switch, restores native VPN rules)
+                    // before the stock handler writes the new choice.
+                    sideSwitchCall(false).then(function (err) {
+                        if (err) { reply({ err_code: -1, err_msg: err }); return; }
+                        btnRawFunc = null;
+                        // One VPN at a time: handing the switch to a native
+                        // tunnel stops sing-box even when side-switch OFF
+                        // left it alone (no native-VPN memo, e.g. it was
+                        // started by hand). The stock handler then syncs
+                        // the chosen tunnel to the switch position.
+                        if (!arg || arg.func !== "vpn") { sendRaw(body); return; }
+                        apiFetch("/api/service", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ action: "stop" })
+                        }).catch(function () {}).then(function () { sendRaw(body); });
+                    });
+                    return;
+                }
+                sendRaw(body);
+            });
+        };
+    }
+    try { installRpcHook(); } catch (e) {}
+
     function init() {
         try { renderSidebar(); } catch (e) {}
         try { startVPNIconPoll(); } catch (e) {}
@@ -2044,6 +2534,7 @@
         // new endpoint — keep working in legacy mode).
         fetchMode().then(function (m) {
             MODE = m;
+            try { modeResolve(MODE); } catch (e) {}
             try { console.log("[xray-panel] injection.mode =", MODE); } catch (e) {}
             try { activateDashboardModule(); } catch (e) {}
         });
