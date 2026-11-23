@@ -70,6 +70,10 @@ small UCI key change.
 
 ## Phase 4b — tunnels-layout dashboard + btnsettings (2026-11-23)
 
+**Applies to:** Beryl 7 (GL-MT3600BE) on 4.9.x **and** Beryl AX (GL-MT3000)
+on 4.11.x — both have the tunnels layout and the same btnsettings RPCs
+(verified 2026-11-23; launcher md5 `8312a119…` deployed to both).
+
 **Why:** firmware 4.9.x on Beryl 7 (GL-MT3600BE) ships a redesigned VPN
 Dashboard: a row of tunnel cards
 (`.vpn-dashboard-wrapper .tunnels-container` → `tunnel-card`… →

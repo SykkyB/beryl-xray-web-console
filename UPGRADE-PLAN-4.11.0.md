@@ -208,3 +208,17 @@ ssh beryl "cat /etc/glversion; /etc/init.d/sing-box status; pgrep -f xray-panel-
 - **Снапшот нового состояния:** R2 `beryl-self-20261025-190103Z.tar.gz.enc` (19 561 328 байт; в списках теперь netify* и htop).
 - **Отклонения от плана:** нет. Улучшение после: `etc/xray-panel-cli/scans` добавлен в `RESTORE_IF_MISSING` restore-скрипта, чтобы в следующий раз сканы вернулись автоматически.
 - **Осталось руками в UI:** переключить боковую кнопку туда-обратно (sing-box должен подняться/опуститься, `logread | grep sing-box`), открыть VPN Dashboard и WireGuard Client (3 профиля), заглянуть в System → Upgrade (4.11.0 текущая, RC выкл). Mesh и AmneziaWG — по отдельному решению.
+
+---
+
+## 10. Апгрейд 4.11.0 → 4.11.1 (2026-11-23, security-фикс CSA-2026-01)
+
+Повод и чек-лист индикаторов — `flint2-xray-web-console/HOME-INFRA.md` §5.1h. Beryl AX был выключен в окно атаки (20–21.11), но работал в месяцы, когда на MT3000 ставили «старый бэкдор» (09.2025–05.2026), поэтому проверялся и на него.
+
+- **Проверка до апгрейда — чисто:** нет `/etc/mp_ip_mapping_info`, цепочки `SDWAN_IP_MAPPING`, `/bin/ulogd`, `/usr/bin/monitord`, `ujaild`; `urandom_seed`, `keep.d/netifd`, busybox, lua, `gl-cloud` = `/rom`; один SSH-ключ, cron штатный + self-backup. Дополнительно: в снапшоте `beryl-20261025-183812Z` (снят ещё на **4.8.1**, до апгрейда на 4.11.0) в `etc/backup/sysupgrade-keep-list.txt` нет `ulogd`/`urandom_seed` — бэкдор не мог «смыться» октябрьской прошивкой.
+- **Перед:** `beryl-config-backup --force` (R2 `beryl-self-mt3000-20261123-113637Z`), `scripts/backup.sh beryl-ax` (`beryl-mt3000-20261123-113711Z`, 179 записей), образы `beryl-backups/fw/mt3000-4.11.1_release3-1221-1122-1795355349.{tar,img}` (`.tar` sha256 `d511cc5c…` = официальный `list-sha256.txt`; `.img` для U-Boot, sha256 посчитан локально).
+- **Апгрейд:** Online, Keep Settings, 15:44:12 → 15:45:55.
+- **После:** `scripts/restore-after-upgrade.sh --host beryl-ax` (htop, enable sing-box/xray-panel-cli, disable tor) → `deploy/install.sh beryl-ax`. Baseline «до/после» — отличается только версия (+ секция `wireless.halow0`). `scans/` на месте (исправление restore-скрипта от этого же дня сработало). Фикс: `mpifd/parameter_validator.lua`, `gl-sdk4-cloud git-2026.323`, `gl-sdk4-system-check`. Повторная проверка индикаторов чистая.
+- **Панели:** у 4.11.x на MT3000 тот же туннельный VPN Dashboard, что у Beryl 7 на 4.9.x (`tunnels-container`, без `single-mode-wrapper`) — старая клон-карточка XRAY здесь тоже не монтировалась. Выкачен launcher Phase 4b (md5 `8312a119…`): XRAY в Toggle Button Settings и карточка с профилями (`HANDOFF-DASHBOARD-INTEGRATION.md`). Заодно обновлён `/usr/sbin/gl-unhide-cn-menus` до версии из git.
+- **Снапшоты после:** R2 `beryl-self-mt3000-20261123-…` и Mac/R2 `beryl-mt3000-20261123-114827Z` (4.11.1, launcher в снапшоте = git).
+- **Состояние:** режим роутера, репитер к flint2, кнопка назначена на XRAY (`func=xray`, `sub_func=10` = Primary Tunnel, `bind_switch=1`), кнопка в OFF → sing-box не запущен. SSID заводские (`GL-MT3000-ad7*`), регион DE/GE, `gl-mesh` mode=agent enabled=0 — след работы mesh-узлом 27–30.10; не трогалось. GoodCloud включён (решение владельца).
