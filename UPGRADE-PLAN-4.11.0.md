@@ -222,3 +222,16 @@ ssh beryl "cat /etc/glversion; /etc/init.d/sing-box status; pgrep -f xray-panel-
 - **Панели:** у 4.11.x на MT3000 тот же туннельный VPN Dashboard, что у Beryl 7 на 4.9.x (`tunnels-container`, без `single-mode-wrapper`) — старая клон-карточка XRAY здесь тоже не монтировалась. Выкачен launcher Phase 4b (md5 `8312a119…`): XRAY в Toggle Button Settings и карточка с профилями (`HANDOFF-DASHBOARD-INTEGRATION.md`). Заодно обновлён `/usr/sbin/gl-unhide-cn-menus` до версии из git.
 - **Снапшоты после:** R2 `beryl-self-mt3000-20261123-…` и Mac/R2 `beryl-mt3000-20261123-114827Z` (4.11.1, launcher в снапшоте = git).
 - **Состояние:** режим роутера, репитер к flint2, кнопка назначена на XRAY (`func=xray`, `sub_func=10` = Primary Tunnel, `bind_switch=1`), кнопка в OFF → sing-box не запущен. SSID заводские (`GL-MT3000-ad7*`), `gl-mesh` mode=agent enabled=0 — след работы mesh-узлом 27–30.10; не трогалось. **Регион Wi-Fi в 15:53 переведён с DE/GE на US** (uci + `gl-txpower-init start` + reboot; откат `/root/wireless.bak-pre-US-2026-11-23`), параметры ограничения мощности — `HOME-INFRA.md` §5.3b. GoodCloud включён (решение владельца).
+
+---
+
+## 11. Апгрейд 4.11.1 → 4.11.2 (2026-11-25)
+
+Общий итог раунда и уроки — `flint2-xray-web-console/HOME-INFRA.md` §5.1i. По Beryl AX:
+
+- **4.11.2:** vdb-submit-1112986 (rtty) и vdb-submit-1112997 (проверка конфигурации/параметров против shell-инъекций).
+- **Перед:** быстрая проверка индикаторов чистая; `beryl-self-mt3000-…` (R2) + `beryl-mt3000-20261125-101152Z` (Mac+R2, 180 записей); образы `mt3000-4.11.2_release1-1222-1124-1795496384.{tar,img}` (`.tar` sha256 `8df4ed8e…` = `list-sha256.txt`).
+- **Апгрейд:** Online, Keep Settings, 14:14:20 → 14:16:01. **Сначала `deploy/install.sh beryl-ax` (патч UI в 14:16:46), потом `scripts/restore-after-upgrade.sh --host beryl-ax`** — так вкладка браузера не успевает загрузиться без launcher.
+- **После:** baseline идентичен (включая регион US, `SKUenable=0`, `TxPower=100`); `scans/` скрипт долил сам; UI-якоря и RPC btnsettings на 4.11.2 те же. Снапшот `beryl-mt3000-20261125-102040Z` (4.11.2).
+- **5 ГГц txpower=10 первые минуты после загрузки** — поведение прошивки (возврат к 100 в момент «ntp been valid» у gl-repeater), не ручная правка; см. HOME-INFRA §5.3b.
+- **Проверка скриптом сообщества** (`gl-helper-triage.sh` 2.55, `--check --no-report`): IOC=0; учётка `stubby` — служебная (`stubby-vpn`), `/usr/bin/login` создаёт прошивка.

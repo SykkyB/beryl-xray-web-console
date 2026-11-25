@@ -97,3 +97,11 @@ ssh beryl7 'uci set wireless.MT7993_1_1.country=US; uci set wireless.MT7993_1_2.
 **Боковая кнопка и дашборд.** На 4.9.x VPN Dashboard туннельный, старые якоря launcher-а отсутствуют → карточка XRAY и селектор Side switch на Beryl 7 не работали с самого переноса. 27.10.2026 16:59 кнопку со штатной страницы назначили на `vpn`/`5003` (Tunnel 1 = WG-клиент `Flint2-GE`), наш hotplug стал уступать (`skip: switch-button bound to native 'vpn'`). 23.11 сделан Phase 4b (`HANDOFF-DASHBOARD-INTEGRATION.md`): пункт `VPN → XRAY (sing-box)` на странице Toggle Button Settings через подмену RPC и своя карточка XRAY с профилями в ряду туннелей. Состояние на конец дня: `switch-button.func=xray`, `sing-box.bind_switch=1`, Tunnel 1 выключен (`native_vpn_disabled=route_policy.@rule[0]`), кнопка в OFF.
 
 **GoodCloud** на Beryl 7 остался включён и привязан (решение владельца). В разборе RemoteToHome упомянута вторая, не закрытая на 22.11 слабость облачного клиента — см. `HOME-INFRA.md` §8.
+
+## 8. Апгрейд 4.9.1 → 4.9.2 (2026-11-25)
+
+- **4.9.2:** «Fixed vulnerability VDB-submit-1113491 and enhanced the security protection of NAS identity authentication» (сервис `gl_nas_sys`, порты 6000–6002).
+- **Перед:** быстрая проверка индикаторов чистая; снапшоты `beryl-self-mt3600be-…` (R2) и `beryl-mt3600be-20261125-095743Z` (Mac+R2); образ `beryl-backups/fw/mt3600be-4.9.2_release1-1049-1124-1795513900.bin` (sha256 `4cf4c4a4…` = `list-sha256.txt`).
+- **Апгрейд:** Online, Keep Settings, 13:59:57 → 14:01:20. После: `scripts/restore-after-upgrade.sh` (сам долил `scans/`) → `deploy/install.sh beryl`; baseline идентичен; снапшот `beryl-mt3600be-20261125-100323Z` (4.9.2).
+- **Launcher на 4.9.2 работает без правок** (якоря `tunnels-container`/`add-tunnel-card`, RPC `switch-button.*`/`vpn-client.get_tunnel` те же). Но патч `gl_home.html` был возвращён в 14:02:41, а веб-морда открыта раньше → «панели не встали» до Cmd+Shift+R. Вывод: после прошивки сначала `deploy/install.sh`, потом restore-скрипт; UI открывать после патча.
+- Скриптом сообщества (`gl-helper-triage.sh`) Beryl 7 **ещё не проверен** — см. `HOME-INFRA.md` §5.1i.
